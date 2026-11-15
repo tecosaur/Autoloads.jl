@@ -1,7 +1,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestLoad
 
-using Test, Autoloads
+using Test, REPL, Autoloads
 
 include("setup.jl")
 
@@ -36,6 +36,18 @@ function start_cases(group; project = nothing)
         run_julia(`$CASES $group $TEST_PROJECT $(WS.member)`; project, output)
     end
     (; group, process, output)
+end
+
+@testset "member_only_roots" begin
+    member_only_roots = Base.get_extension(Autoloads, :AutoloadsREPLExt).member_only_roots
+    stmt = :(@time begin
+        using Base.Threads, Main.X, Test, .Relative
+        using Core: Box
+        using NotHere.Sub: y
+        import NotHereEither as Z
+    end)
+    @test member_only_roots(stmt) == [:NotHere, :NotHereEither]
+    @test isempty(member_only_roots(:(x = 1)))
 end
 
 @testset "load" begin

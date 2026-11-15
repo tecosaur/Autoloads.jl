@@ -61,13 +61,15 @@ the member manifest's version. `LOAD_PATH` is unchanged afterwards.
 Returns whether it loaded. A failure (including [`InconsistentVersions`](@ref)
 and an [`AutoloadFailure`](@ref) for a package that is not installed) is
 logged as one warning and recorded in `state.failed`; failed packages are
-not retried. Every call records `(req.id, req.name)` in `state.attempted`.
+not retried. Every call records `(req.id, req.name)` in `state.attempted`,
+except one interrupted by Ctrl-C: the `InterruptException` propagates and
+nothing is recorded, so the load can be retried.
 """
 function load!(state::LoadState, req::LoadRequest, member::AbstractString)
-    push!(state.attempted, (req.id, req.name))
-    req.id in state.failed && return false
+    key = (req.id, req.name)
+    req.id in state.failed && return (push!(state.attempted, key); false)
     @info "Autoloading $(req.id.name) (for $(req.trigger))"
-    try
+    loaded = try
         if is_in_current_env(req.id)
             Core.eval(Main, using_expr(req))
         else
@@ -81,10 +83,13 @@ function load!(state::LoadState, req::LoadRequest, member::AbstractString)
         end
         true
     catch err
+        is_interrupt(err) && throw(InterruptException())
         @warn "Failed to autoload $(req.id.name)" exception = (err, catch_backtrace())
         push!(state.failed, req.id)
         false
     end
+    push!(state.attempted, key)
+    loaded
 end
 
 """
@@ -92,8 +97,12 @@ end
 
 Evaluate `stmt` in `Main`, with the autoloads `member` directory on
 `LOAD_PATH` during evaluation if a package that a `using`/`import` in `stmt`
-names cannot be found on the current `LOAD_PATH`. `LOAD_PATH` is unchanged
-afterwards. Errors from `stmt` propagate.
+names cannot be found on the current `LOAD_PATH` (`Base`, `Core` and `Main`
+never need it). Each such package that `member` provides first passes the
+same version guard as [`load!`](@ref). `LOAD_PATH` is unchanged afterwards.
+
+Raises [`InconsistentVersions`](@ref) when the guard fails, before anything
+is evaluated; errors from `stmt` propagate.
 
 # Example
 ```julia
@@ -101,11 +110,21 @@ eval_with_member(:(@time using DataFrames), Autoloads.member_dir())
 ```
 """
 function eval_with_member(stmt, member::AbstractString)
-    needs_member = any(root -> Base.identify_package(String(root)) === nothing, import_roots(stmt))
-    needs_member ? with_member(() -> Core.eval(Main, stmt), member) : Core.eval(Main, stmt)
+    roots = member_only_roots(stmt)
+    isempty(roots) && return Core.eval(Main, stmt)
+    member_ids = project_deps(joinpath(member, "Project.toml"))
+    for root in roots
+        index = findfirst(id -> id.name == String(root), member_ids)
+        index === nothing || check_versions(member_ids[index], member)
+    end
+    with_member(() -> Core.eval(Main, stmt), member)
 end
 
 # ── Helpers ──
+
+# A Ctrl-C during a package's `__init__` or top level arrives wrapped.
+is_interrupt(err) = err isa InterruptException ||
+    (err isa Union{Base.InitError, LoadError} && is_interrupt(err.error))
 
 is_in_current_env(id::Base.PkgId) = id.uuid === nothing || Base.identify_package(id.name) == id
 
@@ -140,8 +159,14 @@ function with_member(f, member::AbstractString)
     end
 end
 
-"The package roots `stmt` imports: `A` of `using A.B`, `import A: x`, `import A as B`; relative imports excluded."
-function import_roots(stmt)
+"""
+    member_only_roots(stmt) -> Vector{Symbol}
+
+The package roots `stmt` imports (`A` of `using A.B`, `import A: x`,
+`import A as B`) that the current `LOAD_PATH` cannot find; relative imports
+and `Base`, `Core` and `Main` excluded.
+"""
+function member_only_roots(stmt)
     roots = Symbol[]
     function visit(ex)
         ex isa Expr || return
@@ -155,5 +180,5 @@ function import_roots(stmt)
         end
     end
     visit(stmt)
-    roots
+    filter!(root -> root ∉ (:Base, :Core, :Main) && Base.identify_package(String(root)) === nothing, roots)
 end

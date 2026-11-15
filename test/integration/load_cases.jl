@@ -43,8 +43,9 @@ if GROUP == "global"
         @test first(logged_load!(state, LoadRequest(Base.PkgId(nothing, "Base.Threads"), :nthreads, nothing)))
         @test isdefined(Main, :nthreads)
         @testset "extension resolution" begin
-            Ext.eval_with_member(:(using FixtureC), MEMBER)
+            # The trigger resolves through `@v#.#` alone, with the member absent.
             @test LOAD_PATH == DEFAULT_LOAD_PATH
+            Base.require(FIXTURE_C)
             @test Base.get_extension(Main.FixtureA, :FixtureAFixtureCExt) isa Module
         end
         @testset "failure is remembered" begin
@@ -61,6 +62,13 @@ if GROUP == "global"
             @test !loaded && warned_once(logs, text -> endswith(text,
                 "Run `pkg> instantiate` with the global environment active to install it."))
         end
+        @testset "a pre-existing member entry survives" begin
+            push!(LOAD_PATH, MEMBER)
+            missing_again = LoadRequest(Base.PkgId(Base.UUID(0xe0), "FixtureMissingToo"), :fm2, nothing)
+            _, loaded = Test.collect_test_logs(() -> Ext.load!(state, missing_again, MEMBER))
+            @test !loaded && LOAD_PATH == [DEFAULT_LOAD_PATH; MEMBER]
+            pop!(LOAD_PATH)
+        end
     end
 elseif GROUP == "used"
     @testset "used bindings" begin
@@ -75,6 +83,15 @@ elseif GROUP == "used"
             @test isdefined(Main, :FA_CONST)
             @test LOAD_PATH == DEFAULT_LOAD_PATH
         end
+        @testset "an interrupted load is not recorded" begin
+            c = LoadRequest(FIXTURE_C, :fc, nothing)
+            ENV["FIXTUREC_INTERRUPT"] = "1"
+            @test_throws InterruptException Test.collect_test_logs(() -> Ext.load!(state, c, MEMBER))
+            @test LOAD_PATH == DEFAULT_LOAD_PATH
+            @test FIXTURE_C ∉ state.failed && (FIXTURE_C, nothing) ∉ state.attempted
+            delete!(ENV, "FIXTUREC_INTERRUPT")
+            @test first(logged_load!(state, c))
+        end
     end
 elseif GROUP == "project"
     @testset "active project provides FixtureA v0.2.0" begin
@@ -83,8 +100,14 @@ elseif GROUP == "project"
         @test startswith(pathof(Main.FixtureA), dirname(Base.active_project()))
         @test pkgversion(Main.FixtureA) == v"0.2.0"
         loaded, logs = logged_load!(state, LoadRequest(FIXTURE_B, :fb, nothing))
-        @test !loaded && warned_once(logs, ==("Not autoloading FixtureB: already-loaded FixtureA v0.2.0 \
-            differs from v0.1.0 in the autoloads environment. Add FixtureB to the active project to load it there."))
+        conflict = "Not autoloading FixtureB: already-loaded FixtureA v0.2.0 differs from v0.1.0 \
+            in the autoloads environment. Add FixtureB to the active project to load it there."
+        @test !loaded && warned_once(logs, ==(conflict))
+        @testset "an explicit member using is guarded too" begin
+            err = try Ext.eval_with_member(:(using FixtureB), MEMBER) catch e; e end
+            @test err isa Ext.InconsistentVersions && sprint(showerror, err) == conflict
+            @test LOAD_PATH == DEFAULT_LOAD_PATH
+        end
         @test !isdefined(Main, :fb)
         @test first(logged_load!(state, LoadRequest(FIXTURE_C, :fc, nothing)))
         @test isdefined(Main, :fc)
