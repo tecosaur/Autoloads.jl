@@ -49,8 +49,10 @@ function install_transform()
     nothing
 end
 
-# Precompile workload: the transform's pure core on inline data. Cached code
-# costs load time, so only what the first input runs is compiled here.
+# Precompile workload: the transform's pure core on inline data, and the
+# session worker. Cached code costs load time, but before 1.14 compilation is
+# serialised: the worker compiling its first refresh (~1 s) would stall the
+# main thread's every compile meanwhile (startup files, the first input).
 let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload")
     records = CatalogRecord[PkgNames(id, [v"1.0.0"], Set([:Workload, :wl, Symbol("@wl")]), Set([:wp]), Set{Symbol}())]
     catalog = build_catalog(records)
@@ -74,11 +76,12 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
     precompile(repl_transform, (Expr,))
     precompile(env_stamp, (Runtime,))
     precompile(prepare_statement, (Expr,))
-    # Run just before the first prompt, while the worker compiles; compiling them then
-    # would wait for the worker (compilation is serialised), delaying the prompt ~1 s.
+    # Run just before the first prompt, so it compiles nothing either.
     precompile(wrap_completion!, (REPL.LineEditREPL,))
     precompile(Tuple{Type{CompletionWrapper}, REPL.REPLCompletionProvider})
     precompile(load_pending!, (Session, Vector{Symbol}))
+    precompile(Worker, (Runtime, Indexer))
+    precompile(run_worker, (Worker,))
     # `LoadState.attempted` keys are concrete tuples at run time.
     for key in (Tuple{Base.PkgId, Nothing}, Tuple{Base.PkgId, Symbol})
         precompile(in, (key, Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}))

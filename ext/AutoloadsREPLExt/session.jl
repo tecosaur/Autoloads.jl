@@ -125,9 +125,7 @@ function start_session!(; member::AbstractString = member_dir(), catalog::Abstra
     RUNTIME[] = runtime
     push!(Base.package_callbacks, ObserveLoad(events))
     Autoloads.ENV_CHANGED[] = () -> put!(events, Refresh())
-    # Called dynamically so the worker's code is not cached with the session
-    # start's: it compiles in the background, and cached code costs load time.
-    errormonitor(Threads.@spawn Base.invokelatest(run_worker, Worker(runtime, Indexer())))
+    errormonitor(Threads.@spawn run_worker(Worker(runtime, Indexer())))
     atexit(() -> stop_worker!(runtime))
     put!(events, Refresh())
     runtime
