@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Subprocess half of test_session.jl: runs one case group of the session
 # worker and REPL transform against a prepared workspace, exiting non-zero if
 # any test fails. Inputs are shaped and evaluated as the REPL does.

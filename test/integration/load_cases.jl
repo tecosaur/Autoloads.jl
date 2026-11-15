@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Subprocess half of test_load.jl: runs one case group of `load!` and
 # `eval_with_member` against the shared workspace, exiting non-zero if any
 # test fails.

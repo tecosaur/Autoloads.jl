@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Indexer subprocess: load each requested package and record its namespace,
 # or why it failed to load, in the catalog. Started by `start_indexing!` as
 #

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # A module keeps these helpers apart from the other test files' globals.
 module TestManage
 

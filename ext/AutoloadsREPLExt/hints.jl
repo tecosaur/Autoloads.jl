@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # The `UndefVarError` hint: for a name no loaded module provides, list the
 # packages that export it, ranked by how readily they can be used. It only
 # suggests; it never loads anything. A pure ranking core (`availability`,

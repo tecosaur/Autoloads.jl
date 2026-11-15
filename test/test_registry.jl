@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 using Test
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, Config, PackageConfig, parse_config,
     ManifestGraph, AllBindings, UsedBindings, Catalog, Registry, LoadRequest, build_catalog,

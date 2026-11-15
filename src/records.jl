@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Catalog records: what the package catalog knows about each package's
 # namespace, and their line-oriented serialisation. Depends only on Base so
 # that the standalone indexer script can include it.

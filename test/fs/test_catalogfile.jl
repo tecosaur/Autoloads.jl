@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 using Test
 using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog,
     clear_failures!, read_healed_catalog

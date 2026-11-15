@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Catalog and registry: the catalog records which names each package provides
 # per version; the registry is the immutable name -> owning package view of
 # what may autoload. Everything here is pure.

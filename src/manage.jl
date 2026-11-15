@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Management commands: set up the global autoloads environment (the
 # `autoloads` workspace member of the global environment), change its
 # packages through Pkg in subprocesses, so this session's environment stays

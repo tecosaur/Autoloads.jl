@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # The session: one worker task owns everything derived from the environments
 # and the catalog. The REPL transform, package callbacks and environment
 # notifications only post events; the worker drains them in batches and swaps

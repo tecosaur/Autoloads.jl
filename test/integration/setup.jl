@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Shared integration-test workspace: a temporary depot whose global
 # environment has the `autoloads` member, with the fixtures developed into it.
 # Included (not auto-run) by the integration test files.

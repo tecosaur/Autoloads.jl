@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 """
 The `pkg> autoloads` command group: `init`, `add`, `rm|remove`, `up|update`
 and `st|status`, each calling the Autoloads function of the same name; and

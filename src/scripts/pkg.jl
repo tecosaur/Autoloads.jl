@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Pkg operations on the global autoloads environment, run by `Autoloads.add`,
 # `remove` and `update` as
 #

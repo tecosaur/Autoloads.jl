@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 using Test
 using Autoloads: member_dir, catalog_path, project_deps, manifest_graph, dependency_closure,
     stdlib_ids, builtin_records, run_julia, notify_env_change, ENV_CHANGED, load_config,

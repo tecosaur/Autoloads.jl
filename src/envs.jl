@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Environments: the global autoloads workspace member, project and manifest
 # readers, the stdlib list, built-in records and subprocess helpers.
 

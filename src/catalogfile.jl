@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # The on-disk catalog: one record per line. Reads take no lock and skip torn
 # lines; the session worker's reads and all writes remove them. Writes are
 # rare, serialised by a pidfile lock, and never lose another process's write.

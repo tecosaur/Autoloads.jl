@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Loading autoload packages into `Main`. A package the current environment
 # provides is loaded from there. Otherwise the autoloads member is pushed onto
 # `LOAD_PATH` for the duration of the load only, after checking that no

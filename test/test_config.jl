@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 using Test
 using Autoloads: Config, PackageConfig, ConfigError, PrecompilePolicy, Bindings,
     Background, Lazy, AllBindings, UsedBindings, parse_config, package_config,

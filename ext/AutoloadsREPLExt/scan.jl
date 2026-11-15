@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Input scanning: a cheap syntactic pass decides which REPL statements could
 # involve an autoload package, then lowering resolves which globals a
 # candidate statement actually references.

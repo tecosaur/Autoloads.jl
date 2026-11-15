@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 """
 REPL integration for Autoloads: scans REPL input for references that an
 autoload package could satisfy, loads those packages just before the

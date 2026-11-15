@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Global autoloads environment setup, run by `Autoloads.init` as
 #
 #     julia --project=<global env> init.jl <global env dir> <member to carry over, or "">

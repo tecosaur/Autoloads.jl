@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
+# SPDX-License-Identifier: MPL-2.0
+
 # Tab completion: autoloadable names complete before their package loads,
 # unqualified (exported names) and `P.` qualified (exported, public and
 # re-exported). A pure core (`completions_for`, `completion_context`) sits
