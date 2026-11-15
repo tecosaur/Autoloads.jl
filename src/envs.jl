@@ -63,8 +63,8 @@ The `[deps]` of `project_file`; empty when the file does not exist.
 """
 function project_deps(project_file::AbstractString)
     isfile(project_file) || return Base.PkgId[]
-    deps = get(Base.parsed_toml(project_file), "deps", Dict{String, Any}())
-    [Base.PkgId(Base.UUID(uuid), name) for (name, uuid) in deps]
+    deps = get(Base.parsed_toml(project_file), "deps", Dict{String, Any}())::Dict{String, Any}
+    [Base.PkgId(Base.UUID(uuid::String), name) for (name, uuid) in deps]
 end
 
 """
@@ -79,11 +79,13 @@ function manifest_graph(project_file::AbstractString)
     deps = Dict{Base.UUID, Vector{Base.UUID}}()
     manifest = isfile(project_file) ? Base.project_file_manifest_path(project_file) : nothing
     manifest === nothing && return ManifestGraph(versions, deps)
-    entries = get(Base.parsed_toml(manifest), "deps", Dict{String, Any}())
-    uuid_of = Dict(name => Base.UUID(first(infos)["uuid"]) for (name, infos) in entries)
-    for infos in values(entries), info in infos
-        uuid = Base.UUID(info["uuid"])
-        versions[uuid] = haskey(info, "version") ? VersionNumber(info["version"]) : nothing
+    entries = get(Base.parsed_toml(manifest), "deps", Dict{String, Any}())::Dict{String, Any}
+    uuid_of = Dict{String, Base.UUID}(name => Base.UUID(first(infos::Vector{Any})["uuid"]::String)
+                                      for (name, infos) in entries)
+    for infos in values(entries), info in infos::Vector{Any}
+        info = info::Dict{String, Any}
+        uuid = Base.UUID(info["uuid"]::String)
+        versions[uuid] = haskey(info, "version") ? VersionNumber(info["version"]::String) : nothing
         deps[uuid] = dependency_uuids(get(info, "deps", String[]), uuid_of)
     end
     ManifestGraph(versions, deps)
@@ -91,9 +93,14 @@ end
 
 # `deps` is a list of names, or a name => UUID table when names are ambiguous.
 # Names absent from the manifest are skipped, as Base does when resolving them.
-dependency_uuids(names::AbstractVector, uuid_of) =
-    [uuid_of[name] for name in names if haskey(uuid_of, name)]
-dependency_uuids(table::AbstractDict, _) = [Base.UUID(uuid) for uuid in values(table)]
+function dependency_uuids(@nospecialize(deps), uuid_of::Dict{String, Base.UUID})
+    deps isa AbstractDict && return Base.UUID[Base.UUID(uuid::String) for uuid in values(deps)]
+    uuids = Base.UUID[]
+    for name in deps
+        haskey(uuid_of, name) && push!(uuids, uuid_of[name])
+    end
+    uuids
+end
 
 """
     environment(project_file) -> (; deps::Vector{Base.PkgId}, graph::ManifestGraph)

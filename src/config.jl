@@ -146,16 +146,19 @@ function parse_names(value, keypath)
     String.(value)
 end
 
-function parse_project(value)
+function parse_project(@nospecialize(value))
     value === true && return nothing
     value === false && return Set{String}()
     Set(parse_names(value, ["project"]))
 end
 
-function parse_packages(value)
+function parse_packages(@nospecialize(value))
     value isa AbstractDict || throw(ConfigError(["packages"], "a table of package settings", value))
-    Dict(String(name) => parse_package(settings, ["packages", String(name)])
-         for (name, settings) in value)
+    packages = Dict{String, PackageConfig}()
+    for (name, settings) in value
+        packages[String(name)] = parse_package(settings, ["packages", String(name)])
+    end
+    packages
 end
 
 function parse_package(settings, keypath)

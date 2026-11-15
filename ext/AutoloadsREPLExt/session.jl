@@ -53,15 +53,17 @@ const EnvStamp = @NamedTuple{active::Union{String, Nothing}, environment::NTuple
 """
     Runtime(events, member, catalog_path)
 
-One session's fixed parts: the worker's event channel, the autoloads `member`
-directory and the catalog file. `stamp` (the environment files as last seen
-by the transform) and the failure flags belong to the REPL backend task;
-once `is_stopping` is set (at exit), the worker handles no more batches.
+One session's fixed parts: the worker's event channel and start event, the
+autoloads `member` directory and the catalog file. `stamp` (the environment
+files as last seen by the transform) and the failure flags belong to the REPL
+backend task; once `is_stopping` is set (at exit), the worker handles no more
+batches.
 """
 mutable struct Runtime
     const events::Channel{Event}
     const member::String
     const catalog_path::String
+    const worker_start::Base.Event
     stamp::Union{EnvStamp, Nothing}
     has_reported_transform_failure::Bool
     has_reported_prepare_failure::Bool
@@ -69,7 +71,20 @@ mutable struct Runtime
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractString) =
-    Runtime(events, String(member), String(catalog_path), nothing, false, false, false)
+    Runtime(events, String(member), String(catalog_path), Base.Event(), nothing, false, false, false)
+
+"""
+    WorkerStart(runtime)
+
+Starts `runtime`'s deferred worker: from a `Timer`, at once; from
+`atreplinit`, at the first prompt.
+"""
+struct WorkerStart <: Function
+    runtime::Runtime
+end
+
+(start::WorkerStart)(::Timer) = notify(start.runtime.worker_start)
+(start::WorkerStart)(::REPL.AbstractREPL) = Timer(start, WORKER_START_DELAY_S)
 
 """
     Worker(runtime, indexer)
@@ -109,25 +124,34 @@ const LOAD = LoadState()
 const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
 
 """
-    start_session!(; member = member_dir(), catalog = catalog_path()) -> Runtime
+    start_session!(; member = member_dir(), catalog = catalog_path(), is_deferred = false) -> Runtime
 
 Start this process's session: register load observation and environment
 change notification, start the worker (stopped by [`stop_worker!`](@ref) at
-exit) and request the first refresh. Inputs pass through
+exit) and request the first refresh. With `is_deferred`, the worker waits
+for `notify(runtime.worker_start)`. Inputs pass through
 [`repl_transform`](@ref) unchanged until the first session is derived. Once
 started, later calls return the running session's runtime unchanged
 (`__init__` starts it in interactive sessions).
 """
-function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path())
+function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path(),
+                        is_deferred::Bool = false)
     RUNTIME[] === nothing || return RUNTIME[]
     runtime = Runtime(Channel{Event}(Inf), member, catalog)
     events = runtime.events
     RUNTIME[] = runtime
     push!(Base.package_callbacks, ObserveLoad(events))
     Autoloads.ENV_CHANGED[] = () -> put!(events, Refresh())
-    errormonitor(Threads.@spawn run_worker(Worker(runtime, Indexer())))
+    worker_start = runtime.worker_start
+    # `invokelatest` keeps the worker's code out of the cache, where compiling it costs no stall.
+    @static if IS_COMPILATION_SERIALISED
+        errormonitor(Threads.@spawn (wait(worker_start); run_worker(Worker(runtime, Indexer()))))
+    else
+        errormonitor(Threads.@spawn (wait(worker_start); Base.invokelatest(run_worker, Worker(runtime, Indexer()))))
+    end
     atexit(() -> stop_worker!(runtime))
     put!(events, Refresh())
+    is_deferred || notify(worker_start)
     runtime
 end
 
@@ -140,6 +164,7 @@ worker compiles or writes can crash the process.
 """
 function stop_worker!(runtime::Runtime)
     @atomic runtime.is_stopping = true
+    notify(runtime.worker_start)
     done = Channel{Nothing}(1)
     put!(runtime.events, Flush(done))
     timedwait(() -> isready(done), STOP_WAIT_S; pollint = 0.01)
@@ -381,10 +406,12 @@ end
 
 function transform_input(runtime::Runtime, ex)
     stamp, previous = env_stamp(runtime), runtime.stamp
-    if stamp != previous
+    # `===`, as later loads invalidate a generic `!=` on the stamps.
+    is_same_environment = previous !== nothing && stamp.active == previous.active &&
+        stamp.environment === previous.environment
+    if !is_same_environment || stamp.catalog !== previous.catalog
         runtime.stamp = stamp
-        (previous === nothing || (stamp.active, stamp.environment) != (previous.active, previous.environment)) &&
-            forget_failures!(LOAD)
+        is_same_environment || forget_failures!(LOAD)
         put!(runtime.events, Refresh())
     end
     session = @atomic SESSION.session

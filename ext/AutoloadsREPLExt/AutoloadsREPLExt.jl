@@ -21,6 +21,11 @@ using Autoloads: Catalog, Config, ConfigError, ManifestGraph, build_catalog, bui
     pending_loads, to_index, owner, names_at, read_catalog, read_healed_catalog,
     extract_names, stdlib_ids, builtin_records, member_dir, catalog_path, state_dir, load_config, parse_config
 
+# From `atreplinit`, by when the first prompt is up.
+const WORKER_START_DELAY_S = 0.05
+const WORKER_START_FALLBACK_S = 5
+const IS_COMPILATION_SERIALISED = VERSION < v"1.14-"
+
 include("scan.jl")
 include("indexer.jl")
 include("load.jl")
@@ -30,7 +35,14 @@ include("complete.jl")
 
 function __init__()
     isinteractive() || return
-    start_session!()
+    # The worker starts at the first prompt, so as not to slow the REPL's start.
+    is_repl_running = isdefined(Base, :active_repl)
+    runtime = start_session!(; is_deferred = !is_repl_running)
+    if !is_repl_running
+        start = WorkerStart(runtime)
+        atreplinit(start)
+        Timer(start, WORKER_START_FALLBACK_S)
+    end
     install_transform()
     install_completion()
     Base.Experimental.register_error_hint(undefvar_hint, UndefVarError)
@@ -49,10 +61,8 @@ function install_transform()
     nothing
 end
 
-# Precompile workload: the transform's pure core on inline data, and the
-# session worker. Cached code costs load time, but before 1.14 compilation is
-# serialised: the worker compiling its first refresh (~1 s) would stall the
-# main thread's every compile meanwhile (startup files, the first input).
+# Precompile workload: what inputs and the first prompt run, and the worker
+# where its compiling would stall the REPL's. Cached code costs load time.
 let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload")
     records = CatalogRecord[PkgNames(id, [v"1.0.0"], Set([:Workload, :wl, Symbol("@wl")]), Set([:wp]), Set{Symbol}())]
     catalog = build_catalog(records)
@@ -74,14 +84,29 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
                              CompletionWrapper{REPL.REPLCompletionProvider}, LineEdit.PromptState, Module))
     precompile(Tuple{ObserveLoad, Base.PkgId})
     precompile(repl_transform, (Expr,))
-    precompile(env_stamp, (Runtime,))
+    transform_input(Runtime(Channel{Event}(Inf), "", ""), :(1))  # the first input, forgetting failed loads
+    @static if IS_COMPILATION_SERIALISED
+        precompile(Worker, (Runtime, Indexer))
+        precompile(run_worker, (Worker,))
+        # Run for real: `precompile` misses what untyped settings and TOML dispatch to.
+        mktempdir() do dir
+            member = joinpath(dir, "autoloads")
+            mkpath(member)
+            write(joinpath(member, "Project.toml"), "[deps]\nWorkload = \"$(id.uuid)\"\n")
+            worker = Worker(Runtime(Channel{Event}(Inf), member, joinpath(dir, "catalog")), Indexer())
+            derive_session(worker)
+            maintain_environment!(worker)
+            observe!(worker, [Base.PkgId(Autoloads)])
+        end
+    end
+    let start = WorkerStart(Runtime(Channel{Event}(Inf), "", ""))
+        precompile(start, (REPL.LineEditREPL,))
+        wait(Timer(start, 0))
+    end
     precompile(prepare_statement, (Expr,))
-    # Run just before the first prompt, so it compiles nothing either.
     precompile(wrap_completion!, (REPL.LineEditREPL,))
     precompile(Tuple{Type{CompletionWrapper}, REPL.REPLCompletionProvider})
     precompile(load_pending!, (Session, Vector{Symbol}))
-    precompile(Worker, (Runtime, Indexer))
-    precompile(run_worker, (Worker,))
     # `LoadState.attempted` keys are concrete tuples at run time.
     for key in (Tuple{Base.PkgId, Nothing}, Tuple{Base.PkgId, Symbol})
         precompile(in, (key, Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}))
