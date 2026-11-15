@@ -16,6 +16,7 @@ public Background, Lazy, AllBindings, UsedBindings
 public parse_config, load_config, package_config, bindings_for, autoload_names
 
 include("records.jl")
+include("catalogfile.jl")
 include("config.jl")
 include("envs.jl")
 include("registry.jl")
