@@ -1,0 +1,96 @@
+#+title: Autoloads
+#+author: tecosaur
+
+Autoloads lets you *use packages at the REPL without loading them first*.
+
+When you run code that uses a name such as ~@b~, ~DataFrame~, or an
+unqualified ~@spawn~, and an autoload package provides that name, Autoloads
+loads the package just before the code runs. Add the packages once, and forget
+about them.
+
+** Setup
+
+Add Autoloads to your global environment, load it from your startup file, and
+create the autoloads environment:
+
+#+begin_src julia-repl
+pkg> add Autoloads
+#+end_src
+
+#+begin_src julia
+# ~/.julia/config/startup.jl
+using Autoloads
+#+end_src
+
+#+begin_example
+pkg> autoloads init
+#+end_example
+
+The ~autoloads~ environment is a workspace member of your global environment.
+It is never left on the ~LOAD_PATH~.
+
+** Adding packages
+
+#+begin_src julia-repl
+pkg> autoloads add About Chairmarks DataFrames
+
+julia> @b sum(rand(1000))   # loads Chairmarks
+694.333 ns (3 allocs: 7.883 KiB)
+
+julia> about(sum)           # loads About
+sum (generic function with 10 methods)
+ Defined in Base(8) extended in MPFR(1) and GMP(1).
+#+end_src
+
+Autoloads only acts on names that are undefined and not locally bound. If the
+active project provides an autoload package, it is loaded from there. Indexing
+and precompilation happen in the background.
+
+Autoloadable names also tab-complete, and an ~UndefVarError~ lists the
+packages that provide the name.
+
+The full set of commands is:
+
+#+begin_example
+pkg> autoloads init
+pkg> autoloads add pkg ...
+pkg> autoloads rm pkg ...
+pkg> autoloads up [pkg ...]
+pkg> autoloads status
+#+end_example
+
+~autoloads add~ takes names, or paths of directories to develop; ~add Foo~ develops
+=./Foo= if that directory exists. ~autoloads up~ updates
+the autoload packages together with the global environment's own; a plain
+~pkg> up~ in the global environment does not update the autoload packages.
+
+** Settings
+
+Settings live in ~[preferences.Autoloads]~ in the global environment's
+=Project.toml= or =LocalPreferences.toml=.
+
+| Key                        | Default        | Meaning                                                      |
+|----------------------------+----------------+--------------------------------------------------------------|
+| ~stdlib~                   | ~false~        | Also autoload names from the standard libraries              |
+| ~project~                  | ~false~        | ~true~ or a list: autoload the active project's dependencies |
+| ~precompile~               | ~"background"~ | ~"lazy"~ indexes without precompiling                        |
+| ~bindings~                 | ~"all"~        | ~"used"~ loads only the names used                           |
+| ~packages.<Name>.skip~     | ~[]~           | Names not to autoload                                        |
+| ~packages.<Name>.only~     | unset          | Autoload only these names                                    |
+| ~packages.<Name>.bindings~ | global setting | Per-package ~bindings~                                       |
+
+For example, to autoload the standard libraries, with ~@spawn~ coming from
+~Threads~ rather than ~Distributed~:
+
+#+begin_src toml
+[preferences.Autoloads]
+stdlib = true
+packages.Distributed = {skip = ["@spawn"]}
+#+end_src
+
+** Limitations
+
++ Code built with ~@eval~ is not seen.
++ Candidate statements are macroexpanded twice.
++ This works at the REPL only, not in IJulia or scripts.
++ Extensions of autoloaded packages need ~@v#.#~ on the ~LOAD_PATH~.
