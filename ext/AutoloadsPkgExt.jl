@@ -1,6 +1,10 @@
 """
 The `pkg> autoloads` command group: `init`, `add`, `rm|remove`, `up|update`
-and `st|status`, each calling the Autoloads function of the same name.
+and `st|status`, each calling the Autoloads function of the same name; and
+the wrapping of the environment-changing `pkg>` commands so they request an
+autoload refresh. The wrapping edits Pkg's private `REPLMode.SPECS`, so it is
+confined to [`wrap_pkg_commands!`](@ref) and skipped with a warning if Pkg's
+layout is not as expected.
 """
 module AutoloadsPkgExt
 
@@ -57,6 +61,56 @@ const COMMANDS = [
             """),
 ]
 
+# `pkg>` commands after which the active environments may provide different names.
+const ENV_CHANGING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "resolve", "instantiate"]
+
+const COMMAND_SPEC_FIELDS = (:canonical_name, :short_name, :api, :should_splat, :argument_spec,
+                             :option_specs, :completions, :description, :help)
+
+"A Pkg command `api` that calls `api`, then requests an autoload refresh."
+struct RefreshingApi{F <: Function} <: Function
+    api::F
+end
+
+function (refreshing::RefreshingApi)(args...; kwargs...)
+    result = refreshing.api(args...; kwargs...)
+    Autoloads.notify_env_change()
+    result
+end
+
+"""
+    wrap_pkg_commands!()
+
+Make each of [`ENV_CHANGING_COMMANDS`](@ref) call `Autoloads.notify_env_change()` after
+its `api` succeeds, under every alias. Idempotent; commands already wrapped by this
+function, and other wrappers on any command, are left to coexist. Warns and changes
+nothing if Pkg's `CommandSpec` or `SPECS` are not as expected.
+"""
+function wrap_pkg_commands!()
+    specs = find_package_specs()
+    if specs === nothing
+        @warn "Autoloads cannot refresh after `pkg>` commands: this Pkg's REPLMode.SPECS/CommandSpec layout is not recognised" pkg_version = Pkg.pkgversion(Pkg)
+        return
+    end
+    for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
+        original.api isa RefreshingApi && continue
+        wrapped = REPLMode.CommandSpec((f === :api ? RefreshingApi(original.api) : getfield(original, f)
+                                        for f in COMMAND_SPEC_FIELDS)...)
+        for (name, spec) in specs
+            spec === original && (specs[name] = wrapped)
+        end
+    end
+end
+
+"Pkg's `package` command table, or `nothing` if Pkg's layout lacks it or any command we wrap."
+function find_package_specs()
+    isdefined(REPLMode, :SPECS) && isdefined(REPLMode, :CommandSpec) || return nothing
+    specs = get(REPLMode.SPECS, "package", nothing)
+    specs isa Dict{String, REPLMode.CommandSpec} || return nothing
+    fieldnames(REPLMode.CommandSpec) == COMMAND_SPEC_FIELDS || return nothing
+    all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS) ? specs : nothing
+end
+
 function __init__()
     specs = Dict{String, REPLMode.CommandSpec}()
     for spec in COMMANDS
@@ -64,6 +118,7 @@ function __init__()
         spec.short_name === nothing || (specs[spec.short_name] = spec)
     end
     REPLMode.SPECS["autoloads"] = specs
+    wrap_pkg_commands!()
     copy!(REPLMode.help.content, REPLMode.gen_help().content)
 end
 
