@@ -96,21 +96,69 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
         sibling_member(env.global_dir, PREVIOUS_ENV_NAME, """
             [deps]
             Dates = "$(stdlib_uuid("Dates"))"
+            FixtureA = "$(FIXTURE_A.uuid)"
+            FixtureB = "$(FIXTURE_B.uuid)"
 
             [compat]
             Dates = "1"
+            FixtureA = "0.1"
+            julia = "1.10"
+            """)
+        # The older member's workspace manifest: FixtureA developed, FixtureB from git.
+        previous_root = joinpath(dirname(env.global_dir), PREVIOUS_ENV_NAME)
+        write(joinpath(previous_root, "Project.toml"), "[workspace]\nprojects = [\"autoloads\"]\n")
+        write(joinpath(previous_root, "Manifest.toml"), """
+            manifest_format = "2.0"
+
+            [[deps.Dates]]
+            uuid = "$(stdlib_uuid("Dates"))"
+
+            [[deps.FixtureA]]
+            path = "$(escape_string(joinpath(FIXTURES_DIR, "FixtureA")))"
+            uuid = "$(FIXTURE_A.uuid)"
+            version = "0.1.0"
+
+            [[deps.FixtureB]]
+            repo-url = "https://example.com/FixtureB.jl.git"
+            uuid = "$(FIXTURE_B.uuid)"
+            version = "0.1.0"
             """)
         sibling_member(env.global_dir, "v$(VERSION.major).$(VERSION.minor - 2)",
                        "[deps]\nPrintf = \"$(stdlib_uuid("Printf"))\"\n")
         sibling_member(env.global_dir, "v$(VERSION.major).$(VERSION.minor + 1)",
                        "[deps]\nPrintf = \"$(stdlib_uuid("Printf"))\"\n")
-        captured(env.depot_path) do
+        _, output = captured(env.depot_path) do
             @test_logs Autoloads.init(; carry_over = true, global_dir = env.global_dir)
         end
         member = Base.parsed_toml(joinpath(env.global_dir, "autoloads", "Project.toml"))
         @test member["deps"] == Dict("Dates" => stdlib_uuid("Dates"))
-        @test member["compat"] == Dict("Dates" => "1")
+        @test member["compat"] == Dict("Dates" => "1", "julia" => "1.10")
+        @test occursin(r"Not carrying over FixtureA, FixtureB.*autoloads add <path>", output)
         @test Base.parsed_toml(joinpath(env.global_dir, "Project.toml"))["workspace"]["projects"] == ["autoloads"]
+    end
+    @testset "a failed resolve leaves the global environment as it was" begin
+        env = fresh_global_env("[deps]\nPrintf = \"$(stdlib_uuid("Printf"))\"\n")
+        sibling_member(env.global_dir, PREVIOUS_ENV_NAME,
+                       "[deps]\nNotRegistered = \"0d0d0d0d-4444-4444-8444-00000000000d\"\n")
+        project_file = joinpath(env.global_dir, "Project.toml")
+        bytes = read(project_file)
+        err = try
+            captured(() -> Autoloads.init(; carry_over = true, global_dir = env.global_dir), env.depot_path)
+            nothing
+        catch err
+            err
+        end
+        @test err isa PkgOperationFailed && err.op === :init && err.env == env.global_dir
+        @test occursin(env.global_dir, sprint(showerror, err))
+        @test read(project_file) == bytes
+        @test !ispath(joinpath(env.global_dir, "autoloads"))
+        @test readdir(env.global_dir) == ["Project.toml"]
+        @testset "and init can run again" begin
+            captured(env.depot_path) do
+                @test_logs (:warn,) Autoloads.init(; carry_over = false, global_dir = env.global_dir)
+            end
+            @test isfile(joinpath(env.global_dir, "autoloads", "Project.toml"))
+        end
     end
     @test_throws ArgumentError Autoloads.init(; carry_over = :maybe, global_dir = mktempdir())
 end
@@ -195,7 +243,19 @@ end
             end
             @test err isa PkgOperationFailed && err.op === :remove && err.pkgs == ["NotAPackage"]
             @test occursin("NotAPackage", sprint(showerror, err))
+            @test occursin(ws.member, sprint(showerror, err))
             @test notified[] == 5
+            @testset "a partly failed add still notifies" begin
+                err = try
+                    captured(() -> Autoloads.add([fixture_path(FIXTURE_A), "NotAPackage"]; kws...), ws.depot_path)
+                    nothing
+                catch err
+                    err
+                end
+                @test err isa PkgOperationFailed && err.op === :add
+                @test member_names(ws.member) == ["FixtureA", "FixtureC"]
+                @test notified[] == 6
+            end
             missing_member = (; global_dir = mktempdir(), catalog)
             @test_throws MemberMissing Autoloads.add(["FixtureA"]; missing_member...)
             @test occursin("autoloads init", sprint(showerror, MemberMissing(Autoloads.member_dir(missing_member.global_dir))))

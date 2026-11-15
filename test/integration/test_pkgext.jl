@@ -24,6 +24,9 @@ end
         @test parsed("autoloads st") == (Autoloads.status,)
         @test parsed("autoloads status") == (Autoloads.status,)
         @test parsed("autoloads init") == (Autoloads.init,)
+        @test parsed("autoloads add FixtureA")[2] isa Vector{String}
+        @test parsed("autoloads rm FixtureA")[2] isa Vector{String}
+        @test parsed("autoloads up")[2] isa Vector{String}
     end
     @testset "invalid input" begin
         @test_throws Pkg.Types.PkgError parsed("autoloads frob")

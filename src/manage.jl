@@ -7,22 +7,23 @@ const PKG_SUBPROCESS_ENV = ("JULIA_PKG_PRECOMPILE_AUTO" => "0",)
 const SCRIPTS_DIR = joinpath(@__DIR__, "scripts")
 
 """
-    PkgOperationFailed(op, pkgs, exitcode)
+    PkgOperationFailed(op, pkgs, env, exitcode)
 
 The Pkg subprocess of management command `op` (`:init`, `:add`, `:remove`
-or `:update`) on packages `pkgs` exited with `exitcode`. Its output, already
-printed, gives the reason.
+or `:update`) on packages `pkgs`, in environment directory `env`, exited
+with `exitcode`. Its output, already printed, gives the reason.
 """
 struct PkgOperationFailed <: Exception
     op::Symbol
     pkgs::Vector{String}
+    env::String
     exitcode::Int
 end
 
 function Base.showerror(io::IO, e::PkgOperationFailed)
     print(io, "Autoloads.", e.op, " failed")
     isempty(e.pkgs) || print(io, " for ", join(e.pkgs, ", "))
-    print(io, ": its Pkg subprocess exited with code ", e.exitcode, ". ",
+    print(io, " in ", e.env, ": its Pkg subprocess exited with code ", e.exitcode, ". ",
           "The Pkg output above gives the reason; fix that and try again.")
 end
 
@@ -44,14 +45,18 @@ Base.showerror(io::IO, e::MemberMissing) =
     init(; carry_over = :ask)
 
 Set up the global autoloads environment: list `"autoloads"` in the global
-environment's `[workspace].projects` (leaving the rest of its Project.toml
-as is), create the `autoloads` member, and resolve the workspace. Running it
-again changes nothing.
+environment's `[workspace].projects`, create the `autoloads` member, and
+resolve the workspace. Running it again changes nothing. Adding the member
+re-serialises the global Project.toml, keeping its content but (as Pkg's own
+writes do) not its comments or layout. If resolving fails, the global
+Project.toml is restored and the new member removed.
 
 When the member is created and the global environment of an older Julia
 minor version (the newest one) has an autoloads member, `carry_over` says
-whether to copy its `[deps]` and `[compat]`: `true`, `false`, or `:ask` to
-prompt in interactive sessions (otherwise, print how to add them).
+whether to copy its registry `[deps]` and their `[compat]`: `true`, `false`,
+or `:ask` to prompt in interactive sessions (otherwise, print how to add
+them). Developed and git-sourced packages are not carried over; their names
+are printed so they can be re-added by path.
 
 Warns if the global environment does not depend on Autoloads.
 
@@ -101,10 +106,14 @@ function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir()
     isempty(pkgs) && throw(ArgumentError("Autoloads.add: no packages given"))
     member = existing_member(global_dir)
     specs = [isdir(expanduser(pkg)) ? abspath(expanduser(pkg)) : pkg for pkg in pkgs]
-    run_pkg_operation(:add, pkgs, specs, member)
-    names = [isdir(spec) ? package_name(spec) : spec for spec in specs]
-    clear_failures!(catalog, [id for id in project_deps(joinpath(member, "Project.toml")) if id.name in names])
-    notify_env_change()
+    # A failed `Pkg.add` may follow a successful `Pkg.develop`, so notify regardless.
+    try
+        run_pkg_operation(:add, pkgs, specs, member)
+        names = [isdir(spec) ? package_name(spec) : spec for spec in specs]
+        clear_failures!(catalog, [id for id in project_deps(joinpath(member, "Project.toml")) if id.name in names])
+    finally
+        notify_env_change()
+    end
 end
 
 """
@@ -244,7 +253,7 @@ function run_pkg_subprocess(op::Symbol, pkgs::Vector{String}, args::Cmd; project
     process = run_julia(args; project, env = PKG_SUBPROCESS_ENV)
     wait(process)
     @debug "Autoloads Pkg subprocess exited" op pkgs project process.exitcode
-    success(process) || throw(PkgOperationFailed(op, pkgs, process.exitcode))
+    success(process) || throw(PkgOperationFailed(op, pkgs, String(project), process.exitcode))
     nothing
 end
 
