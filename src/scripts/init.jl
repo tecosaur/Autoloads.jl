@@ -7,8 +7,8 @@
 #
 # Lists the `autoloads` member in the global Project.toml's
 # `[workspace].projects` (rewriting the file, atomically, only when that
-# changes it), creates the member with the registry `[deps]` (and their
-# `[compat]`) of the member carried over, if any, along with its global
+# changes it), creates the member with the `[deps]` (and their `[compat]`
+# and `[sources]`) of the member carried over, if any, along with its global
 # environment's Autoloads preferences, then resolves the workspace. If
 # anything fails, the global Project.toml and LocalPreferences.toml are
 # restored and what this run created of the member is removed, so `init` can
@@ -61,7 +61,7 @@ end
 
 function create_member(member_file, carry_over_dir)
     isfile(member_file) && return println("$member_file already exists")
-    carried = isempty(carry_over_dir) ? Dict{String, Any}() : registry_deps(joinpath(carry_over_dir, "Project.toml"))
+    carried = isempty(carry_over_dir) ? Dict{String, Any}() : carried_deps(joinpath(carry_over_dir, "Project.toml"))
     mkpath(dirname(member_file))
     write_toml(member_file, carried)
     println("Created $member_file",
@@ -90,29 +90,41 @@ function carry_preferences(global_dir, previous_dir)
 end
 
 """
-The `[deps]` of `project_file` that its manifest does not record as developed
-or git-sourced (with a `path` or `repo-url`), with their `[compat]` and
-Julia's. Prints the names of the deps skipped.
+The `[deps]` of `project_file`, with their `[compat]` and Julia's, and the
+`[sources]` of those developed or from a git repository: the project's own
+entry, else one made from its manifest (Pkg before 1.13 records sources there
+only). Paths are made absolute, as the new member is elsewhere.
 """
-function registry_deps(project_file)
+function carried_deps(project_file)
     project = TOML.parsefile(project_file)
     deps = get(project, "deps", Dict{String, Any}())
-    sourced = sourced_uuids(project_file)
-    kept = filter(((_, uuid),) -> !(uuid in sourced), deps)
-    compat = filter(((name, _),) -> name == "julia" || haskey(kept, name), get(project, "compat", Dict{String, Any}()))
-    skipped = sort!([name for name in keys(deps) if !haskey(kept, name)])
-    isempty(skipped) ||
-        println("Not carrying over $(join(skipped, ", ")), developed or from a git repository; ",
-                "re-add each with `pkg> autoloads add <path>`")
-    filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => kept, "compat" => compat))
+    declared = get(project, "sources", Dict{String, Any}())
+    recorded = manifest_sources(project_file)
+    absolute(source) = if haskey(source, "path")
+        merge(source, Dict("path" => normpath(joinpath(dirname(project_file), source["path"]))))
+    else
+        source
+    end
+    sources = Dict{String, Any}(name => absolute(get(declared, name, recorded[uuid]))
+                                for (name, uuid) in deps if haskey(declared, name) || haskey(recorded, uuid))
+    compat = filter(((name, _),) -> name == "julia" || haskey(deps, name), get(project, "compat", Dict{String, Any}()))
+    filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => deps, "compat" => compat, "sources" => sources))
 end
 
-function sourced_uuids(project_file)
+"The `[sources]` entry for each developed or git-sourced package of `project_file`'s manifest, by UUID."
+function manifest_sources(project_file)
     manifest = Base.project_file_manifest_path(project_file)
-    manifest === nothing && return Set{String}()
-    entries = get(TOML.parsefile(manifest), "deps", Dict{String, Any}())
-    Set{String}(info["uuid"] for infos in values(entries) for info in infos
-                if haskey(info, "path") || haskey(info, "repo-url"))
+    sources = Dict{String, Dict{String, Any}}()
+    manifest === nothing && return sources
+    for infos in values(get(TOML.parsefile(manifest), "deps", Dict{String, Any}())), info in infos
+        source = if haskey(info, "path")
+            Dict{String, Any}("path" => normpath(joinpath(dirname(manifest), info["path"])))
+        elseif haskey(info, "repo-url")
+            Dict{String, Any}(key => info["repo-" * key] for key in ("url", "rev", "subdir") if haskey(info, "repo-" * key))
+        end
+        source === nothing || (sources[info["uuid"]] = source)
+    end
+    sources
 end
 
 key_rank(key) = (something(findfirst(==(key), KEY_ORDER), length(KEY_ORDER) + 1), key)

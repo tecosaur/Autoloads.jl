@@ -55,8 +55,10 @@ pkg> autoloads up [pkg ...]
 pkg> autoloads status
 #+end_example
 
-~autoloads add~ takes names, or paths of directories to develop; ~add Foo~ develops
-=./Foo= if that directory exists. ~autoloads up~ updates
+~autoloads add~ takes names, git URLs (=url#rev= for a revision), or paths of
+directories to develop; ~add Foo~ develops =./Foo= if that directory exists.
+When ~autoloads init~ carries packages over from an older Julia version,
+developed and git-sourced ones keep their source. ~autoloads up~ updates
 the autoload packages together with the global environment's own; a plain
 ~pkg> up~ in the global environment does not update the autoload packages.
 

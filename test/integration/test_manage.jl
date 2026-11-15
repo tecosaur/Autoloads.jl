@@ -45,6 +45,17 @@ function captured(f, depot_path)
     end
 end
 
+"A git repository, on branch `main`, holding a copy of fixture `name`."
+function git_fixture(name)
+    repo = mktempdir()
+    cp(joinpath(FIXTURES_DIR, name), repo; force = true)
+    git = `git -C $repo -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false`
+    run(pipeline(`git init -q -b main $repo`; stdout = devnull))
+    run(`$git add -A`)
+    run(`$git commit -qm $name`)
+    repo
+end
+
 member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "Project.toml"))])
 
 @testset "init" begin
@@ -100,6 +111,14 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
                                                  catalog = joinpath(mktempdir(), "catalog")), env.depot_path)
         @test occursin("Created", output)
         @test member_names(joinpath(env.global_dir, "autoloads")) == ["FixtureA"]
+        @testset "and adds from a git URL" begin
+            url = "file://" * git_fixture("FixtureC")
+            captured(() -> Autoloads.add("$url#main"; global_dir = env.global_dir,
+                                         catalog = joinpath(mktempdir(), "catalog")), env.depot_path)
+            member = Base.parsed_toml(joinpath(env.global_dir, "autoloads", "Project.toml"))
+            @test haskey(member["deps"], "FixtureC")
+            @test VERSION < v"1.13-" || member["sources"]["FixtureC"] == Dict("url" => url, "rev" => "main")
+        end
     end
     @testset "carries over the newest older member" begin
         env = fresh_global_env("""
@@ -109,6 +128,9 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             [sources]
             Autoloads = {path = "$(escape_string(AUTOLOADS_DIR))"}
             """)
+        previous_root = joinpath(dirname(env.global_dir), PREVIOUS_ENV_NAME)
+        fixture_a = joinpath(FIXTURES_DIR, "FixtureA")
+        # FixtureA has a relative `[sources]` path; FixtureB's git source is in the manifest only.
         sibling_member(env.global_dir, PREVIOUS_ENV_NAME, """
             [deps]
             Dates = "$(stdlib_uuid("Dates"))"
@@ -119,9 +141,11 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             Dates = "1"
             FixtureA = "0.1"
             julia = "1.10"
+
+            [sources]
+            FixtureA = {path = "$(escape_string(relpath(fixture_a, joinpath(previous_root, "autoloads"))))"}
             """)
-        # The older member's workspace manifest: FixtureA developed, FixtureB from git.
-        previous_root = joinpath(dirname(env.global_dir), PREVIOUS_ENV_NAME)
+        repo = git_fixture("FixtureB")
         write(joinpath(previous_root, "Project.toml"),
               "[workspace]\nprojects = [\"autoloads\"]\n\n[preferences.Autoloads]\nlog = true\n")
         write(joinpath(previous_root, "LocalPreferences.toml"), "[Autoloads]\nstdlib = false\n")
@@ -132,12 +156,14 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             uuid = "$(stdlib_uuid("Dates"))"
 
             [[deps.FixtureA]]
-            path = "$(escape_string(joinpath(FIXTURES_DIR, "FixtureA")))"
+            path = "$(escape_string(fixture_a))"
             uuid = "$(FIXTURE_A.uuid)"
             version = "0.1.0"
 
             [[deps.FixtureB]]
-            repo-url = "https://example.com/FixtureB.jl.git"
+            deps = ["FixtureA"]
+            repo-rev = "main"
+            repo-url = "$(escape_string(repo))"
             uuid = "$(FIXTURE_B.uuid)"
             version = "0.1.0"
             """)
@@ -149,9 +175,12 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             @test_logs Autoloads.init(; carry_over = true, global_dir = env.global_dir)
         end
         member = Base.parsed_toml(joinpath(env.global_dir, "autoloads", "Project.toml"))
-        @test member["deps"] == Dict("Dates" => stdlib_uuid("Dates"))
-        @test member["compat"] == Dict("Dates" => "1", "julia" => "1.10")
-        @test occursin(r"Not carrying over FixtureA, FixtureB.*autoloads add <path>", output)
+        @test member["deps"] == Dict("Dates" => stdlib_uuid("Dates"), "FixtureA" => string(FIXTURE_A.uuid),
+                                     "FixtureB" => string(FIXTURE_B.uuid))
+        @test member["compat"] == Dict("Dates" => "1", "FixtureA" => "0.1", "julia" => "1.10")
+        @test member["sources"] == Dict("FixtureA" => Dict("path" => fixture_a),
+                                        "FixtureB" => Dict("url" => repo, "rev" => "main"))
+        @test occursin("carrying over 3 packages", output)
         global_project = Base.parsed_toml(joinpath(env.global_dir, "Project.toml"))
         @test global_project["workspace"]["projects"] == ["autoloads"]
         @testset "with the preferences" begin

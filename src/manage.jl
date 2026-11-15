@@ -56,12 +56,11 @@ Project.toml is restored and the new member removed.
 
 When the member is created and the global environment of an older Julia
 minor version (the newest one) has an autoloads member, `carry_over` says
-whether to copy its registry `[deps]` and their `[compat]`, and the Autoloads
-preferences of that environment's Project.toml and LocalPreferences.toml
-into each of this one's that has none: `true`, `false`, or `:ask` to prompt
-in interactive sessions (otherwise, print how to add them). Developed and
-git-sourced packages are not carried over; their names are printed so they
-can be re-added by path.
+whether to copy its `[deps]` with their `[compat]` and `[sources]` (developed
+and git-sourced packages keep their source), and the Autoloads preferences
+of that environment's Project.toml and LocalPreferences.toml into each of
+this one's that has none: `true`, `false`, or `:ask` to prompt in
+interactive sessions (otherwise, print how to add them).
 
 Warns if the global environment does not depend on Autoloads. The
 `global_dir` keyword is internal, for testing.
@@ -95,9 +94,10 @@ end
     add(pkgs::AbstractString...)
 
 Add packages to the global autoloads environment, first creating it with
-[`init`](@ref) if it does not exist yet: names are added from the
-registries, and paths of existing directories are developed. Recorded
-indexing failures of the packages are cleared, so they are indexed again.
+[`init`](@ref) if it does not exist yet: paths of existing directories are
+developed, git URLs (`url#rev` for a revision) are added from their
+repository, and names from the registries. Recorded indexing failures of
+the packages are cleared, so they are indexed again.
 The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Raises
@@ -115,11 +115,13 @@ function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir()
     member = member_dir(global_dir)
     isfile(joinpath(member, "Project.toml")) || init(; global_dir)
     specs = [isdir(expanduser(pkg)) ? abspath(expanduser(pkg)) : pkg for pkg in pkgs]
+    member_project = joinpath(member, "Project.toml")
+    before = Set(project_deps(member_project))
     # A failed `Pkg.add` may follow a successful `Pkg.develop`, so notify regardless.
     try
         run_pkg_operation(:add, pkgs, specs, member)
         names = [isdir(spec) ? package_name(spec) : spec for spec in specs]
-        clear_failures!(catalog, [id for id in project_deps(joinpath(member, "Project.toml")) if id.name in names])
+        clear_failures!(catalog, [id for id in project_deps(member_project) if id.name in names || id ∉ before])
     finally
         notify_env_change()
     end
