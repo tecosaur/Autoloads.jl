@@ -20,11 +20,13 @@ include("scan.jl")
 include("indexer.jl")
 include("load.jl")
 include("session.jl")
+include("hints.jl")
 
 function __init__()
     isinteractive() || return
     start_session!()
     install_transform()
+    Base.Experimental.register_error_hint(undefvar_hint, UndefVarError)
 end
 
 # The one place that touches REPL internals: `repl_ast_transforms` is copied

@@ -14,7 +14,7 @@ const SHARED = build_workspace(; fixtures = (FIXTURE_A,))
 const CHANGING = build_workspace(; fixtures = (FIXTURE_A,))
 # Stdlibs whose real names a test relies on (`@spawn`, `status`), or that
 # every catalog write loads (FileWatching).
-const REAL_STDLIBS = ("Distributed", "Pkg", "FileWatching")
+const REAL_STDLIBS = ("Distributed", "Pkg", "FileWatching", "Statistics")
 
 """
 The namespaces of the `REAL_STDLIBS`, extracted in a subprocess whose depot
@@ -50,6 +50,11 @@ const STDLIB_RECORDS = CatalogRecord[real_stdlib_records(SHARED);
                                      [stdlib_stub(id) for id in stdlib_ids() if id.name ∉ REAL_STDLIBS]]
 const FIXTURE_A_NAMES = PkgNames(FIXTURE_A, [v"0.1.0"], Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                                  Set([:fa_public]), Set{Symbol}())
+# FixtureB re-exports `fa`; FixtureC owns a `fa` of its own.
+const FIXTURE_B_NAMES = PkgNames(FIXTURE_B, [v"0.1.0"], Set([:FixtureB, :fb]), Set{Symbol}(), Set([:fa]))
+const FIXTURE_C_NAMES = PkgNames(FIXTURE_C, [v"0.1.0"], Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())
+const STRANGER_NAMES = PkgNames(Base.PkgId(Base.UUID("5555aaaa-1111-4111-8111-000000000005"), "Stranger"), [v"1.0.0"],
+                                Set([:Stranger, :stranger_fn]), Set{Symbol}(), Set{Symbol}())
 const FIXTURE_UUIDS = Dict(id.name => id.uuid for id in (FIXTURE_A, FIXTURE_B, FIXTURE_C))
 
 "A fresh catalog holding the stdlib records and `extra`."
@@ -131,6 +136,10 @@ end
         """)
     broken_project = fixture_project(String[]; prefs = "stdlib = \"yes\"")
     no_member = joinpath(mktempdir(), "autoloads")
+    hint_catalog = seeded_catalog(FIXTURE_A_NAMES, FIXTURE_B_NAMES, FIXTURE_C_NAMES)
+    bare_project = fixture_project(String[])
+    rm(joinpath(bare_project, "Manifest.toml"))
+    only_b = fixture_project(["FixtureB"]; prefs = "project = [\"FixtureB\"]")
     runs = [start_cases("member", CHANGING, CHANGING.member, seeded_catalog()),
             start_cases("sequencing", SHARED, SHARED.member, with_a),
             start_cases("macro", SHARED, SHARED.member, seeded_catalog(FIXTURE_A_NAMES)),
@@ -138,6 +147,9 @@ end
                         project = stdlib_project),
             start_cases("project", SHARED, no_member, project_catalog, projects.unselected, projects.without,
                         projects.selecting; project = projects.selecting)]
+    push!(runs, start_cases("hints", SHARED, SHARED.member, hint_catalog, bare_project; project = only_b),
+          start_cases("hints-bare", SHARED, no_member, seeded_catalog(FIXTURE_B_NAMES, STRANGER_NAMES);
+                      project = only_b))
     unwritable = seeded_catalog(FIXTURE_A_NAMES)
     chmod(dirname(unwritable), 0o555)
     push!(runs, start_cases("unwritable", SHARED, SHARED.member, unwritable))

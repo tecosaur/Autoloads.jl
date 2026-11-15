@@ -207,6 +207,69 @@ elseif GROUP == "project"
         run_input("1")
         @test eventually(autoloads(:fa))
     end
+elseif GROUP == "hints"
+    bare = joinpath(only(EXTRA), "Project.toml")
+    only_b = Base.active_project()
+    start_session!()
+    await_session()
+    hint_for(name, scope = Main) = sprint(Ext.undefvar_hint, UndefVarError(name, scope))
+    activate!(project) = (Base.set_active_project(project); run_input("1"); flush_worker())
+    header(name) = "\nHint: $name is provided by packages that are not loaded:\n"
+    @testset "ranking by availability in the active project" begin
+        @test hint_for(:fa) == header(:fa) *
+            "    - `using FixtureB` (a dependency of the active project), which re-exports it from FixtureA\n" *
+            "    - `pkg> add FixtureA` (already resolved in the active project's manifest)\n" *
+            "    - `pkg> add FixtureC` (already resolved in the active project's manifest)"
+    end
+    @testset "names not provided by the catalog, or outside Main" begin
+        @test hint_for(:no_such_name) == ""
+        @test hint_for(:fa, Base) == ""
+    end
+    @testset "stdlib provider" begin
+        @test occursin("`using Statistics` (from @stdlib)", hint_for(:mean))
+    end
+    activate!(bare)
+    @testset "providers that are only available elsewhere" begin
+        @test hint_for(:fa) == header(:fa) *
+            "    - `pkg> add FixtureA`, or `pkg> autoloads add FixtureA`\n" *
+            "    - `pkg> add FixtureC`, or `pkg> autoloads add FixtureC`\n" *
+            "    - `pkg> add FixtureB`, or `pkg> autoloads add FixtureB`, which re-exports it from FixtureA and FixtureC"
+    end
+    @testset "load path environments" begin
+        env_dir = joinpath(DEPOT_PATH[1], "environments", "extras")
+        mkpath(env_dir)
+        write(joinpath(env_dir, "Project.toml"), "[deps]\nFixtureC = \"$(FIXTURE_C.uuid)\"\n")
+        push!(LOAD_PATH, "@extras")
+        @test startswith(hint_for(:fa), header(:fa) * "    - `using FixtureC` (from @extras)\n")
+        pop!(LOAD_PATH)
+        path_dir = mktempdir()
+        write(joinpath(path_dir, "Project.toml"), "[deps]\nFixtureC = \"$(FIXTURE_C.uuid)\"\n")
+        push!(LOAD_PATH, path_dir)
+        @test occursin("`using FixtureC` (from $(joinpath(path_dir, "Project.toml")))", hint_for(:fa))
+        pop!(LOAD_PATH)
+    end
+    activate!(only_b)
+    @testset "a name a loaded module provides" begin
+        run_input("using FixtureB")
+        @test is_loaded(FIXTURE_B) && hint_for(:fa) == ""
+    end
+elseif GROUP == "hints-bare"
+    hint_for(name) = sprint(Ext.undefvar_hint, UndefVarError(name, Main))
+    init_note = "    - `pkg> add Stranger` (run `pkg> autoloads init` to autoload packages)"
+    @testset "without a session the catalog file is read on demand" begin
+        mkpath(dirname(Autoloads.catalog_path()))
+        cp(CATALOG, Autoloads.catalog_path())
+        @test current_session() === nothing
+        @test occursin("`using FixtureB` (a dependency of the active project)", hint_for(:fb))
+        # The depot's global environment has a member, which the hint finds on disk.
+        @test endswith(hint_for(:stranger_fn), "    - `pkg> add Stranger`, or `pkg> autoloads add Stranger`")
+    end
+    @testset "a session without a member gives the same note" begin
+        start_session!()
+        await_session()
+        @test current_session() !== nothing
+        @test endswith(hint_for(:stranger_fn), init_note)
+    end
 elseif GROUP == "observe-again"
     start_session!()
     await_session(autoloads(:fa))
