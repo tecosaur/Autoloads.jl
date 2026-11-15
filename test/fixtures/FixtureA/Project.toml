@@ -1,3 +1,9 @@
 name = "FixtureA"
 uuid = "a0a0a0a0-1111-4111-8111-00000000000a"
 version = "0.1.0"
+
+[weakdeps]
+FixtureC = "c0c0c0c0-3333-4333-8333-00000000000c"
+
+[extensions]
+FixtureAFixtureCExt = "FixtureC"

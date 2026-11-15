@@ -6,11 +6,12 @@ subprocess.
 module AutoloadsREPLExt
 
 using Autoloads, REPL
-using Autoloads: Registry, is_candidate
+using Autoloads: Registry, LoadRequest, is_candidate, manifest_graph, dependency_closure
 using Autoloads: PkgFailure, CatalogRecord, PrecompilePolicy, Lazy, Background,
     run_julia, write_catalog_changes!, INTERRUPTED_EXIT_CODE
 
 include("scan.jl")
 include("indexer.jl")
+include("load.jl")
 
 end
