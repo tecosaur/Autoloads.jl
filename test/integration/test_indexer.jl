@@ -142,6 +142,19 @@ end
         @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"),
                                           wanted(Base.PkgId[]), _ -> error("on_exit must not run"))
     end
+    @testset "a recurring supervisor failure is logged once" begin
+        dir = mktempdir()
+        chmod(dir, 0o555)  # the indexer log cannot be opened
+        logger = Test.TestLogger(min_level = Base.CoreLogging.Error)
+        try
+            Base.CoreLogging.with_logger(logger) do
+                foreach(_ -> finish_run(start_run(ix, Lazy, [FIXTURE_A]; path = joinpath(dir, "catalog-v1"))), 1:2)
+            end
+        finally
+            chmod(dir, 0o755)
+        end
+        @test count(log -> startswith(log.message, "Supervising the indexer"), logger.logs) == 1
+    end
     @testset "a held indexing lock stops the run" begin
         path = joinpath(mktempdir(), "catalog-v1")
         lock = Base.invokelatest(PIDFILE.mkpidlock, path * ".indexing")

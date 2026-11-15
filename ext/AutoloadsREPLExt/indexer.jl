@@ -16,14 +16,16 @@ const INDEXER_ENV = ("JULIA_PKG_PRECOMPILE_AUTO" => "0",)
 
 Runs at most one indexer subprocess at a time; see [`start_indexing!`](@ref).
 A package that takes longer than `timeout_s` seconds to load (precompilation
-excluded) is recorded as failed. Use from a single task.
+excluded) is recorded as failed. Use from a single task; the supervisor of
+the run in progress owns `reported_errors` (see [`is_unreported!`](@ref)).
 """
 mutable struct Indexer
     supervisor::Union{Task, Nothing}
     const timeout_s::Int
+    const reported_errors::Set{String}
 end
 
-Indexer(; timeout_s::Integer = DEFAULT_TIMEOUT_S) = Indexer(nothing, timeout_s)
+Indexer(; timeout_s::Integer = DEFAULT_TIMEOUT_S) = Indexer(nothing, timeout_s, Set{String}())
 
 """
     start_indexing!(ix, policy, project, path, wanted, on_exit) -> Bool
@@ -41,7 +43,8 @@ indexer holds the catalog's `.indexing` lock, the subprocess exits at once.
 Once the subprocess exits, a failure is recorded for the package it was
 loading if it timed out, crashed or exited abnormally (but not when
 interrupted by SIGINT, SIGTERM or SIGHUP); packages after it stay unrecorded
-so they are retried. A subprocess that fails to start is logged. Either way,
+so they are retried. A subprocess that fails to start, or a supervisor
+failure, is logged, once per distinct error until a run succeeds. Either way,
 once the run is over `on_exit(changed::Bool)` is called on a spawned task,
 `changed` being whether the catalog file differs from before the run; `ix`
 is free by then, so `on_exit` may start the next run.
@@ -56,7 +59,7 @@ function start_indexing!(ix::Indexer, policy::PrecompilePolicy, project::Abstrac
     entries = ["$(id.uuid)=$(id.name)=$(something(version, "-"))" for (id, version) in wanted]
     cmd = julia_command(`$(POLICY_FLAGS[policy]) $script $(lowercase(string(policy))) $path $entries`;
                         project, env = INDEXER_ENV, nice = true, detach = true)
-    supervisor = Threads.@spawn launch_and_supervise(cmd, project, path, wanted, ix.timeout_s)
+    supervisor = Threads.@spawn launch_and_supervise(cmd, project, path, wanted, ix.timeout_s, ix.reported_errors)
     ix.supervisor = errormonitor(supervisor)
     errormonitor(Threads.@spawn begin
         wait(supervisor; throw = false)
@@ -90,19 +93,27 @@ function catalog_stamp(path)
     ispath(st) ? (st.mtime, st.size) : nothing
 end
 
-function launch_and_supervise(cmd::Base.AbstractCmd, project, path, wanted, timeout_s)
+function launch_and_supervise(cmd::Base.AbstractCmd, project, path, wanted, timeout_s, reported::Set{String})
     output = Pipe()
     process = try
         run(pipeline(cmd; stdin = devnull, stdout = output, stderr = output); wait = false)
     catch err
-        @error "Could not start the indexer for $project; its packages are retried on the next refresh" path exception =
-            (err, catch_backtrace())
+        is_unreported!(reported, err) &&
+            @error "Could not start the indexer for $project; its packages are retried on the next refresh" path exception =
+                (err, catch_backtrace())
         return
     end
     close(output.in)
     pid = getpid(process)
     @debug "Indexer started" pid project count = length(wanted)
-    supervise(process, pid, output, path, wanted, timeout_s)
+    try
+        supervise(process, pid, output, path, wanted, timeout_s)
+        empty!(reported)
+    catch err
+        is_unreported!(reported, err) &&
+            @error "Supervising the indexer for $project failed; its packages are retried on the next refresh" pid path exception =
+                (err, catch_backtrace())
+    end
 end
 
 function supervise(process::Base.Process, pid::Integer, output::Pipe, path, wanted, timeout_s)

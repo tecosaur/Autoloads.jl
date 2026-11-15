@@ -71,7 +71,8 @@ Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractSt
     Worker(runtime, indexer)
 
 The worker's own state: the built-in records and stdlib ids (computed once),
-and the configuration and observation errors already reported.
+and the configuration, observation and refresh errors logged since each last
+succeeded (see [`is_unreported!`](@ref)).
 """
 struct Worker
     runtime::Runtime
@@ -80,10 +81,11 @@ struct Worker
     stdlibs::Vector{Base.PkgId}
     reported_config_errors::Set{String}
     reported_observation_errors::Set{String}
+    reported_refresh_errors::Set{String}
 end
 
 Worker(runtime::Runtime, indexer::Indexer) =
-    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}())
+    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}(), Set{String}())
 
 "`Base.package_callbacks` entry: only enqueues an [`Observed`](@ref) event."
 struct ObserveLoad
@@ -209,23 +211,30 @@ end
 
 """
 Record the observed packages, then refresh once if the catalog or the
-environment changed. A failed observation is logged (once per distinct
-error) and never prevents the refresh.
+environment changed. A failed observation or refresh is logged once per
+distinct error until it succeeds again; a failed observation never prevents
+the refresh.
 """
 function handle_batch!(worker::Worker, batch::Vector{Event})
     observed = unique(event.id for event in batch if event isa Observed)
     has_written = try
-        observe!(worker, observed)
+        written = observe!(worker, observed)
+        isempty(observed) || empty!(worker.reported_observation_errors)
+        written
     catch err
-        message = sprint(showerror, err)
-        if !(message in worker.reported_observation_errors)
-            push!(worker.reported_observation_errors, message)
+        is_unreported!(worker.reported_observation_errors, err) &&
             @error "Autoloads failed to record loaded packages in its catalog" packages = observed exception =
                 (err, catch_backtrace())
-        end
         false
     end
-    (has_written || any(event -> event isa Refresh, batch)) && refresh!(worker)
+    (has_written || any(event -> event isa Refresh, batch)) || return
+    try
+        refresh!(worker)
+        empty!(worker.reported_refresh_errors)
+    catch err
+        is_unreported!(worker.reported_refresh_errors, err) &&
+            @error "Autoloads failed to update its session" exception = (err, catch_backtrace())
+    end
     nothing
 end
 
@@ -288,10 +297,8 @@ function read_config!(worker::Worker)
         cfg
     catch err
         err isa ConfigError || rethrow()
-        message = sprint(showerror, err)
-        message in worker.reported_config_errors && return nothing
-        push!(worker.reported_config_errors, message)
-        @error "Autoloads is off until its settings are fixed" exception = err
+        is_unreported!(worker.reported_config_errors, err) &&
+            @error "Autoloads is off until its settings are fixed" exception = err
         nothing
     end
 end
@@ -357,6 +364,20 @@ function load_pending!(session::Session, names)
     for request in pending_loads(session.registry, session.config, names, isbound, LOAD.attempted)
         load!(LOAD, request, session.member)
     end
+end
+
+"""
+    is_unreported!(reported, err) -> Bool
+
+Whether `err` is to be logged: its `showerror` text is not among the
+`reported` texts, which it then joins. Emptying `reported` once the failing
+operation succeeds lets a recurring error be logged once until it clears.
+"""
+function is_unreported!(reported::Set{String}, err)
+    message = sprint(showerror, err)
+    message in reported && return false
+    push!(reported, message)
+    true
 end
 
 "Log `message` with `err` unless the `flag` field of `runtime` says it was already logged."

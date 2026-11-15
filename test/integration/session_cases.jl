@@ -159,6 +159,13 @@ elseif GROUP == "stdlib"
             ex = repl_input("@spawn 1")
             @test Ext.repl_transform(ex) === ex
         end
+        @testset "a recurring refresh failure is logged once" begin
+            half_saved = joinpath(mktempdir(), "Project.toml")
+            write(half_saved, "[deps\n")
+            Base.set_active_project(half_saved)
+            foreach(_ -> (Autoloads.notify_env_change(); flush_worker()), 1:3)
+            @test count(log -> log.message == "Autoloads failed to update its session", logger.logs) == 1
+        end
     end
     @testset "stdlib" begin
         Base.set_active_project(START_PROJECT)
