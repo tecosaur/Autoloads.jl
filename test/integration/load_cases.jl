@@ -22,8 +22,8 @@ const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
 const FIXTURE_MISSING = Base.PkgId(Base.UUID("d0d0d0d0-4444-4444-8444-00000000000d"), "FixtureMissing")
 
 "Run `load!`, returning its result and the `(level, message, exception text)` of each log."
-function logged_load!(state, req)
-    logs, loaded = Test.collect_test_logs(() -> Ext.load!(state, req, MEMBER))
+function logged_load!(state, req; kwargs...)
+    logs, loaded = Test.collect_test_logs(() -> Ext.load!(state, req, MEMBER; kwargs...))
     @test LOAD_PATH == DEFAULT_LOAD_PATH
     exception_text(log) = haskey(log.kwargs, :exception) ? sprint(showerror, first(log.kwargs[:exception])) : ""
     loaded, [(log.level, log.message, exception_text(log)) for log in logs]
@@ -43,7 +43,8 @@ if GROUP == "global"
             (true, [(Logging.Info, "Autoloading FixtureA (for fa)", "")])
         @test isdefined(Main, :fa) && isdefined(Main, :FA_CONST)
         @test (FIXTURE_A, nothing) in state.attempted
-        @test first(logged_load!(state, LoadRequest(Base.PkgId(nothing, "Base.Threads"), :nthreads, nothing)))
+        @test logged_load!(state, LoadRequest(Base.PkgId(nothing, "Base.Threads"), :nthreads, nothing);
+                           announce = false) == (true, [])
         @test isdefined(Main, :nthreads)
         @testset "extension resolution" begin
             # The trigger resolves through `@v#.#` alone, with the member absent.

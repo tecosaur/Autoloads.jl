@@ -53,10 +53,10 @@ Base.showerror(io::IO, err::AutoloadFailure) =
     print(io, "Cannot autoload ", err.id.name, ": ", err.reason, ". ", err.remedy)
 
 """
-    load!(state, req, member) -> Bool
+    load!(state, req, member; announce = true) -> Bool
 
 Load `req.id` into `Main` (`using A.B`, or `using A.B: name` when `req.name`
-is set), announcing it with an info line naming `req.trigger`. A package the
+is set), announcing it with an info line naming `req.trigger` if `announce`. A package the
 current `LOAD_PATH` provides (or a built-in) is loaded directly; otherwise
 from the autoloads `member` directory, which is on `LOAD_PATH` only during
 the load and only once every loaded package in its dependency closure matches
@@ -70,10 +70,10 @@ not retried until [`forget_failures!`](@ref). Every call records
 the `InterruptException` propagates and nothing is recorded, so the load can
 be retried.
 """
-function load!(state::LoadState, req::LoadRequest, member::AbstractString)
+function load!(state::LoadState, req::LoadRequest, member::AbstractString; announce::Bool = true)
     key = (req.id, req.name)
     req.id in state.failed && return (push!(state.attempted, key); false)
-    @info "Autoloading $(req.id.name) (for $(req.trigger))"
+    announce && @info "Autoloading $(req.id.name) (for $(req.trigger))"
     loaded = try
         if is_in_current_env(req.id)
             Core.eval(Main, using_expr(req))

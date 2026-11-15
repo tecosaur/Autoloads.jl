@@ -71,6 +71,7 @@ Settings live in ~[preferences.Autoloads]~ in the global environment's
 | ~project~                  | ~false~        | ~true~ or a list: autoload the active project's dependencies |
 | ~precompile~               | ~"background"~ | ~"lazy"~ indexes without precompiling                        |
 | ~bindings~                 | ~"all"~        | ~"used"~ loads only the names used                           |
+| ~log~                      | ~true~         | ~false~ autoloads without the "Autoloading …" line           |
 | ~packages.<Name>.skip~     | ~[]~           | Names not to autoload                                        |
 | ~packages.<Name>.only~     | unset          | Autoload only these names                                    |
 | ~packages.<Name>.bindings~ | global setting | Per-package ~bindings~                                       |
