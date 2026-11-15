@@ -56,10 +56,12 @@ Project.toml is restored and the new member removed.
 
 When the member is created and the global environment of an older Julia
 minor version (the newest one) has an autoloads member, `carry_over` says
-whether to copy its registry `[deps]` and their `[compat]`: `true`, `false`,
-or `:ask` to prompt in interactive sessions (otherwise, print how to add
-them). Developed and git-sourced packages are not carried over; their names
-are printed so they can be re-added by path.
+whether to copy its registry `[deps]` and their `[compat]`, and the Autoloads
+preferences of that environment's Project.toml and LocalPreferences.toml
+into each of this one's that has none: `true`, `false`, or `:ask` to prompt
+in interactive sessions (otherwise, print how to add them). Developed and
+git-sourced packages are not carried over; their names are printed so they
+can be re-added by path.
 
 Warns if the global environment does not depend on Autoloads. The
 `global_dir` keyword is internal, for testing.
@@ -249,7 +251,7 @@ function ask_carry_over(previous)
     packages = count == 1 ? "package" : "packages"
     julia = "Julia $(VERSION.major).$(previous.minor)"
     if isinteractive()
-        print(stdout, "Carry over $count autoload $packages from $julia? [Y/n] ")
+        print(stdout, "Carry over $count autoload $packages, and the Autoloads settings, from $julia? [Y/n] ")
         return lowercase(strip(readline(stdin))) in ("", "y", "yes")
     end
     println(stdout, "$julia has $count autoload $packages ($(join(previous.names, ", "))); to carry ",

@@ -122,7 +122,9 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             """)
         # The older member's workspace manifest: FixtureA developed, FixtureB from git.
         previous_root = joinpath(dirname(env.global_dir), PREVIOUS_ENV_NAME)
-        write(joinpath(previous_root, "Project.toml"), "[workspace]\nprojects = [\"autoloads\"]\n")
+        write(joinpath(previous_root, "Project.toml"),
+              "[workspace]\nprojects = [\"autoloads\"]\n\n[preferences.Autoloads]\nlog = true\n")
+        write(joinpath(previous_root, "LocalPreferences.toml"), "[Autoloads]\nstdlib = false\n")
         write(joinpath(previous_root, "Manifest.toml"), """
             manifest_format = "2.0"
 
@@ -150,7 +152,13 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
         @test member["deps"] == Dict("Dates" => stdlib_uuid("Dates"))
         @test member["compat"] == Dict("Dates" => "1", "julia" => "1.10")
         @test occursin(r"Not carrying over FixtureA, FixtureB.*autoloads add <path>", output)
-        @test Base.parsed_toml(joinpath(env.global_dir, "Project.toml"))["workspace"]["projects"] == ["autoloads"]
+        global_project = Base.parsed_toml(joinpath(env.global_dir, "Project.toml"))
+        @test global_project["workspace"]["projects"] == ["autoloads"]
+        @testset "with the preferences" begin
+            @test global_project["preferences"]["Autoloads"] == Dict("log" => true)
+            @test Base.parsed_toml(joinpath(env.global_dir, "LocalPreferences.toml")) ==
+                Dict("Autoloads" => Dict("stdlib" => false))
+        end
     end
     @testset "a failed resolve leaves the global environment as it was" begin
         env = fresh_global_env("[deps]\nPrintf = \"$(stdlib_uuid("Printf"))\"\n")

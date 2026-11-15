@@ -8,10 +8,12 @@
 # Lists the `autoloads` member in the global Project.toml's
 # `[workspace].projects` (rewriting the file, atomically, only when that
 # changes it), creates the member with the registry `[deps]` (and their
-# `[compat]`) of the member carried over, if any, then resolves the
-# workspace. If anything fails, the global Project.toml is restored and what
-# this run created of the member is removed, so `init` can simply be run
-# again. A Pkg or resolver error is printed without a backtrace and exits 1.
+# `[compat]`) of the member carried over, if any, along with its global
+# environment's Autoloads preferences, then resolves the workspace. If
+# anything fails, the global Project.toml and LocalPreferences.toml are
+# restored and what this run created of the member is removed, so `init` can
+# simply be run again. A Pkg or resolver error is printed without a backtrace
+# and exits 1.
 
 const TOML = Base.require(Base.PkgId(Base.UUID("fa267f1f-6049-4f14-aa54-33bafae1ed76"), "TOML"))
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
@@ -24,14 +26,18 @@ function main(global_dir, carry_over_dir)
     mkpath(global_dir)
     project_file = joinpath(global_dir, "Project.toml")
     member_file = joinpath(global_dir, MEMBER, "Project.toml")
-    original = isfile(project_file) ? read(project_file) : nothing
+    originals = [file => (isfile(file) ? read(file) : nothing)
+                 for file in (project_file, joinpath(global_dir, "LocalPreferences.toml"))]
     had_member_dir, had_member_file = isdir(dirname(member_file)), isfile(member_file)
     try
         list_member(project_file)
         create_member(member_file, carry_over_dir)
+        isempty(carry_over_dir) || carry_preferences(global_dir, dirname(carry_over_dir))
         Pkg.resolve()
     catch
-        original === nothing ? rm(project_file; force = true) : write_atomically(project_file, original)
+        for (file, original) in originals
+            original === nothing ? rm(file; force = true) : write_atomically(file, original)
+        end
         had_member_dir || rm(dirname(member_file); recursive = true, force = true)
         had_member_dir && !had_member_file && rm(member_file; force = true)
         println(stderr, "Restored $project_file and removed the new $MEMBER member after the failure below")
@@ -60,6 +66,27 @@ function create_member(member_file, carry_over_dir)
     write_toml(member_file, carried)
     println("Created $member_file",
             isempty(carry_over_dir) ? "" : ", carrying over $(length(get(carried, "deps", ()))) packages from $carry_over_dir")
+end
+
+"""
+Copy the Autoloads preferences of the global environment in `previous_dir`,
+from its Project.toml and LocalPreferences.toml, into each of
+`global_dir`'s that has none.
+"""
+function carry_preferences(global_dir, previous_dir)
+    for (file, keypath) in (("Project.toml", ["preferences", "Autoloads"]), ("LocalPreferences.toml", ["Autoloads"]))
+        source = joinpath(previous_dir, file)
+        isfile(source) || continue
+        table = foldl((dict, key) -> get(dict, key, Dict{String, Any}()), keypath; init = TOML.parsefile(source))
+        isempty(table) && continue
+        target = joinpath(global_dir, file)
+        content = isfile(target) ? TOML.parsefile(target) : Dict{String, Any}()
+        parent = foldl((dict, key) -> get!(dict, key, Dict{String, Any}()), keypath[1:end-1]; init = content)
+        haskey(parent, last(keypath)) && continue
+        parent[last(keypath)] = table
+        write_toml(target, content)
+        println("Carried over the Autoloads preferences in $source")
+    end
 end
 
 """
