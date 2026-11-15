@@ -13,7 +13,7 @@ using REPL: LineEdit
 using Autoloads: Registry, LoadRequest, is_candidate, manifest_graph, dependency_closure,
     project_deps, environment
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, PrecompilePolicy, Lazy, Background,
-    run_julia, write_catalog_changes!, INTERRUPTED_EXIT_CODE
+    julia_command, write_catalog_changes!, INTERRUPTED_EXIT_CODE
 using Autoloads: Catalog, Config, ConfigError, ManifestGraph, build_catalog, build_registry, autoload_set,
     pending_loads, to_index, owner, names_at, read_catalog, extract_names, stdlib_ids, builtin_records, member_dir,
     catalog_path, load_config, parse_config

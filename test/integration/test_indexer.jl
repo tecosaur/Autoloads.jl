@@ -127,6 +127,17 @@ end
             PkgFailure(FIXTURE_C, v"0.1.0", "indexer timed out after 8 s while indexing")
         @test !ispath(path * ".indexing")  # released for the next run despite SIGKILL
     end
+    @testset "on_exit may start the next run" begin
+        start(ids, on_exit) = withenv("JULIA_DEPOT_PATH" => WS.depot_path, "JULIA_LOAD_PATH" => nothing) do
+            IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"), wanted(ids), on_exit)
+        end
+        results = Channel{Any}(2)
+        @test start([FIXTURE_A], _ -> put!(results, start([FIXTURE_C], _ -> put!(results, :second_done))))
+        next_result() = timedwait(() -> isready(results), INDEXER_WAIT_S) === :ok ? take!(results) : :timed_out
+        restarted = next_result()
+        @test restarted === true
+        restarted === true && @test next_result() === :second_done
+    end
     @testset "nothing to index starts nothing" begin
         @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"),
                                           wanted(Base.PkgId[]), _ -> error("on_exit must not run"))

@@ -128,15 +128,22 @@ no startup or history file. `project` is the `--project` to use, or
 `nothing` for the default. `env` is a collection of `name => value` pairs;
 `nice` lowers its priority where `nice` is available. Does not wait for it.
 """
-function run_julia(args::Cmd; project, env = (), nice::Bool = false,
-                   detach::Bool = false, output = stdout)
+run_julia(args::Cmd; output = stdout, options...) =
+    run(pipeline(julia_command(args; options...); stdout = output, stderr = output); wait = false)
+
+"""
+    julia_command(args::Cmd; project, env = (), nice = false, detach = false) -> Cmd
+
+The command [`run_julia`](@ref) runs, with `env` added to a copy of `ENV`
+taken now, so running it later still sees the current environment.
+"""
+function julia_command(args::Cmd; project, env = (), nice::Bool = false, detach::Bool = false)
     cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no`
     project === nothing || (cmd = `$cmd --project=$project`)
     cmd = `$cmd $args`
     nice && Sys.which("nice") !== nothing && (cmd = `nice -n 10 $cmd`)
     cmd = addenv(cmd, env...)
-    detach && (cmd = Base.detach(cmd))
-    run(pipeline(cmd; stdout = output, stderr = output); wait = false)
+    detach ? Base.detach(cmd) : cmd
 end
 
 "Tell whoever registered in [`ENV_CHANGED`](@ref) that the environment changed."
