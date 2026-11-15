@@ -278,7 +278,7 @@ function derive_session(worker::Worker)
     has_member || !isempty(selected) || return nothing, nothing
     autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
                             worker.stdlibs, [record.id for record in worker.builtins], cfg)
-    catalog = build_catalog([worker.builtins; read_catalog(worker.runtime.catalog_path)])
+    catalog = build_catalog([worker.builtins; read_healed_catalog(worker.runtime.catalog_path)])
     session = Session(catalog, build_registry(catalog, autoload, cfg), cfg, member,
                       Set(id.name for id in member_env.deps))
     # Stdlibs are always indexed, for hints. Without a member, a session implies an active project.

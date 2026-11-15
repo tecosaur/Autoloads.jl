@@ -1,6 +1,6 @@
 using Test
 using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog,
-    clear_failures!
+    clear_failures!, read_healed_catalog
 
 const CATALOG_UUID_A = Base.UUID("00000000-0000-0000-0000-0000000000b1")
 const CATALOG_UUID_B = Base.UUID("00000000-0000-0000-0000-0000000000b2")
@@ -111,16 +111,18 @@ catalog_names(uuid, name, version, exported...) =
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B, :h))
             write(path, catalog_line(good) * "\n" * line[1:end-12])
-            records = @test_logs (:warn, r"Removed 1 malformed") read_catalog(path)
-            @test records == [good]
             @test (@test_logs read_catalog(path)) == [good]
+            records = @test_logs (:warn, r"Removed 1 malformed") read_healed_catalog(path)
+            @test records == [good]
+            @test (@test_logs read_healed_catalog(path)) == [good]
             @test !write_catalog_changes!(path, CatalogRecord[good])
             # In a read-only directory the lines stay, and the warning is not repeated.
             write(path, catalog_line(good) * "\n" * line[1:end-12])
             chmod(dir, 0o555)
             try
                 logger = Test.TestLogger(; respect_maxlog = true)
-                @test Base.CoreLogging.with_logger(() -> [read_catalog(path), read_catalog(path)], logger) == [[good], [good]]
+                reads = Base.CoreLogging.with_logger(() -> [read_healed_catalog(path) for _ in 1:2], logger)
+                @test reads == [[good], [good]]
                 @test occursin("could not be removed", only(logger.logs).message)
             finally
                 chmod(dir, 0o755)

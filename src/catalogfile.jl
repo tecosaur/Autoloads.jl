@@ -1,7 +1,8 @@
-# The on-disk catalog: one record per line. Reads take no lock unless the file
-# has torn lines, which they remove; writes are rare, serialised by a pidfile
-# lock, and never lose another process's write. Depends only on Base (plus FileWatching, required lazily) so
-# that the standalone indexer script can include it after `records.jl`.
+# The on-disk catalog: one record per line. Reads take no lock and skip torn
+# lines; the session worker's reads and all writes remove them. Writes are
+# rare, serialised by a pidfile lock, and never lose another process's write.
+# Depends only on Base (plus FileWatching, required lazily) so that the
+# standalone indexer script can include it after `records.jl`.
 
 const FILEWATCHING_ID = Base.PkgId(Base.UUID("7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"), "FileWatching")
 const LOCK_STALE_AGE_S = 60
@@ -10,11 +11,20 @@ const LOCK_STALE_AGE_S = 60
     read_catalog(path) -> Vector{CatalogRecord}
 
 Read the records in `path`, in file order, without locking. A missing file
-gives no records. Malformed (e.g. torn) lines are skipped and removed from
-the file under the catalog lock, with one warning giving their count; if
-they cannot be removed, that is warned of once per session instead.
+gives no records; malformed (e.g. torn) lines are skipped silently (see
+[`read_healed_catalog`](@ref)).
 """
-function read_catalog(path::AbstractString)
+read_catalog(path::AbstractString) = first(parse_catalog_file(path))
+
+"""
+    read_healed_catalog(path) -> Vector{CatalogRecord}
+
+[`read_catalog`](@ref), but malformed lines are removed from the file under
+the catalog lock, with one warning giving their count; if they cannot be
+removed, that is warned of once per session instead. For the reader that
+owns the catalog (the session worker): it may wait for the lock.
+"""
+function read_healed_catalog(path::AbstractString)
     records, malformed = parse_catalog_file(path)
     malformed == 0 && return records
     try
