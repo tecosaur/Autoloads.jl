@@ -11,59 +11,63 @@ module AutoloadsPkgExt
 
 using Autoloads, Pkg
 
-const REPLMode = Pkg.REPLMode
-
-command(; help, kwargs...) = REPLMode.CommandSpec(; help = REPLMode.Markdown.parse(help), kwargs...)
+# `nothing` without a REPL mode; then every use below fails soft.
+const REPLMode = isdefined(Pkg, :REPLMode) ? Pkg.REPLMode : nothing
 
 # Built when precompiling, against the Pkg it is loaded with (a different Pkg
 # recompiles this extension), so building costs no load time; a failure is
 # kept as its message for `register_commands!` to report.
 # `init` and `status` take no arguments, so are called splatted: as `init()`.
-const COMMANDS = try [
-    command(name = "init", api = Autoloads.init, arg_count = 0 => 0,
-            description = "set up the global autoloads environment",
-            help = """
-                autoloads init
+const COMMANDS = try
+    REPLMode === nothing && error("this Pkg has no REPLMode")
+    let command = (; help, kwargs...) -> REPLMode.CommandSpec(; help = REPLMode.Markdown.parse(help), kwargs...)
+        [
+        command(name = "init", api = Autoloads.init, arg_count = 0 => 0,
+                description = "set up the global autoloads environment",
+                help = """
+                    autoloads init
 
-            Set up the global autoloads environment, the `autoloads` workspace member of the
-            global environment, and resolve it. When it is created, the autoload packages of
-            the newest older Julia version's global environment can be carried over.
-            """),
-    command(name = "add", api = Autoloads.add, should_splat = false, arg_count = 1 => Inf,
-            completions = :complete_add_dev, description = "add packages to autoload",
-            help = """
-                autoloads add pkg ...
+                Set up the global autoloads environment, the `autoloads` workspace member of the
+                global environment, and resolve it. When it is created, the autoload packages of
+                the newest older Julia version's global environment can be carried over.
+                """),
+        command(name = "add", api = Autoloads.add, should_splat = false, arg_count = 1 => Inf,
+                completions = :complete_add_dev, description = "add packages to autoload",
+                help = """
+                    autoloads add pkg ...
 
-            Add packages to the global autoloads environment, by name or (for an existing
-            directory) by path, which is developed.
-            """),
-    command(name = "remove", short_name = "rm", api = Autoloads.remove, should_splat = false,
-            arg_count = 1 => Inf, completions = :complete_installed_packages,
-            description = "remove packages from the autoloads",
-            help = """
-                autoloads [rm|remove] pkg ...
+                Add packages to the global autoloads environment, by name or (for an existing
+                directory) by path, which is developed.
+                """),
+        command(name = "remove", short_name = "rm", api = Autoloads.remove, should_splat = false,
+                arg_count = 1 => Inf, completions = :complete_installed_packages,
+                description = "remove packages from the autoloads",
+                help = """
+                    autoloads [rm|remove] pkg ...
 
-            Remove packages from the global autoloads environment.
-            """),
-    command(name = "update", short_name = "up", api = Autoloads.update, should_splat = false,
-            arg_count = 0 => Inf, completions = :complete_installed_packages,
-            description = "update the global and autoload packages",
-            help = """
-                autoloads [up|update] [pkg ...]
+                Remove packages from the global autoloads environment.
+                """),
+        command(name = "update", short_name = "up", api = Autoloads.update, should_splat = false,
+                arg_count = 0 => Inf, completions = :complete_installed_packages,
+                description = "update the global and autoload packages",
+                help = """
+                    autoloads [up|update] [pkg ...]
 
-            Update the given packages, or every package of the global environment and its
-            autoloads, in one resolve.
-            """),
-    command(name = "status", short_name = "st", api = Autoloads.status, arg_count = 0 => 0,
-            description = "show what autoloads",
-            help = """
-                autoloads [st|status]
+                Update the given packages, or every package of the global environment and its
+                autoloads, in one resolve.
+                """),
+        command(name = "status", short_name = "st", api = Autoloads.status, arg_count = 0 => 0,
+                description = "show what autoloads",
+                help = """
+                    autoloads [st|status]
 
-            Show the global and project autoload packages with their versions and indexing
-            state, the names more than one of them provides, the precompile policy, and the
-            global autoloads environment's path.
-            """),
-] catch err
+                Show the global and project autoload packages with their versions and indexing
+                state, the names more than one of them provides, the precompile policy, and the
+                global autoloads environment's path.
+                """),
+        ]
+    end
+catch err
     sprint(showerror, err)
 end
 
