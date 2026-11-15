@@ -5,6 +5,7 @@
 # the transform's change stamp live with the REPL backend task.
 
 const MISSING_FILE_STAMP = (0.0, Int64(0), UInt64(0))
+const STOP_WAIT_S = 1.0
 
 """
     Session(catalog, registry, config, member, member_deps)
@@ -50,7 +51,8 @@ const EnvStamp = Tuple{Union{String, Nothing}, NTuple{9, FileStamp}}
 
 One session's fixed parts: the worker's event channel, the autoloads `member`
 directory and the catalog file. `stamp` (the environment files as last seen
-by the transform) and the failure flags belong to the REPL backend task.
+by the transform) and the failure flags belong to the REPL backend task;
+once `is_stopping` is set (at exit), the worker handles no more batches.
 """
 mutable struct Runtime
     const events::Channel{Event}
@@ -59,10 +61,11 @@ mutable struct Runtime
     stamp::Union{EnvStamp, Nothing}
     has_reported_transform_failure::Bool
     has_reported_prepare_failure::Bool
+    @atomic is_stopping::Bool
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractString) =
-    Runtime(events, String(member), String(catalog_path), nothing, false, false)
+    Runtime(events, String(member), String(catalog_path), nothing, false, false, false)
 
 """
     Worker(runtime, indexer)
@@ -97,9 +100,9 @@ const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
     start_session!(; member = member_dir(), catalog = catalog_path()) -> Runtime
 
 Start this process's session: register load observation and environment
-change notification, start the worker and request the first refresh. Inputs
-pass through [`repl_transform`](@ref) unchanged until the first session is
-derived. Once started, later calls return the running session's runtime
+change notification, start the worker (stopped by [`stop_worker!`](@ref) at
+exit) and request the first refresh. Inputs pass through
+[`repl_transform`](@ref) unchanged until the first session is derived. Once started, later calls return the running session's runtime
 unchanged (`__init__` starts it in interactive sessions).
 """
 function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path())
@@ -112,8 +115,24 @@ function start_session!(; member::AbstractString = member_dir(), catalog::Abstra
     # Called dynamically so the worker's code is not cached with the session
     # start's: it compiles in the background, and cached code costs load time.
     errormonitor(Threads.@spawn Base.invokelatest(run_worker, Worker(runtime, Indexer())))
+    atexit(() -> stop_worker!(runtime))
     put!(events, Refresh())
     runtime
+end
+
+"""
+    stop_worker!(runtime)
+
+Stop the worker of `runtime` handling batches, and wait (up to
+$(STOP_WAIT_S) s) for the batch in progress to finish: exiting while the
+worker compiles or writes can crash the process.
+"""
+function stop_worker!(runtime::Runtime)
+    @atomic runtime.is_stopping = true
+    done = Channel{Nothing}(1)
+    put!(runtime.events, Flush(done))
+    timedwait(() -> isready(done), STOP_WAIT_S; pollint = 0.01)
+    nothing
 end
 
 """
@@ -165,11 +184,11 @@ end
 # ── Worker ──
 
 function run_worker(worker::Worker)
-    events = worker.runtime.events
+    (; events) = runtime = worker.runtime
     for event in events
         batch = next_batch!(events, event)
         try
-            handle_batch!(worker, batch)
+            (@atomic runtime.is_stopping) || handle_batch!(worker, batch)
         catch err
             @error "Autoloads failed to update its session" exception = (err, catch_backtrace())
         finally

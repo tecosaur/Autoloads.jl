@@ -110,6 +110,13 @@ elseif GROUP == "sequencing"
         @test_throws MethodError run_input("x = 1; fa(x)")
         @test is_loaded(FIXTURE_A)
     end
+    @testset "a stopped worker handles no more batches" begin
+        before = current_session()
+        Ext.stop_worker!(Ext.RUNTIME[])
+        Autoloads.notify_env_change()
+        flush_worker()
+        @test current_session() === before
+    end
 elseif GROUP == "macro"
     start_session!()
     await_session(autoloads(Symbol("@fam")))
