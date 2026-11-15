@@ -1,0 +1,6 @@
+name = "FixtureB"
+uuid = "b0b0b0b0-2222-4222-8222-00000000000b"
+version = "0.1.0"
+
+[deps]
+FixtureA = "a0a0a0a0-1111-4111-8111-00000000000a"
