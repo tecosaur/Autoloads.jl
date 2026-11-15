@@ -66,19 +66,19 @@ const BINDINGS_NAMES = Dict("all" => AllBindings, "used" => UsedBindings)
     parse_config(prefs::AbstractDict) -> Config
 
 Parse merged preferences (as parsed TOML) into a [`Config`](@ref). Missing
-keys take their defaults: `stdlib = false`, `project` empty,
-`precompile = "background"`, `bindings = "all"`, `log = true`.
+keys take their defaults: `stdlib = true`, `project = true`,
+`precompile = "background"`, `bindings = "all"`, `log = false`.
 
 Throws [`ConfigError`](@ref) for unknown keys or values of the wrong shape.
 """
 function parse_config(prefs::AbstractDict)
     check_keys(prefs, TOP_LEVEL_KEYS, String[])
     Config(
-        parse_bool(prefs, "stdlib", false),
-        parse_project(get(prefs, "project", false)),
+        parse_bool(prefs, "stdlib", true),
+        parse_project(get(prefs, "project", true)),
         parse_choice(prefs, "precompile", POLICY_NAMES, Background),
         parse_choice(prefs, "bindings", BINDINGS_NAMES, AllBindings),
-        parse_bool(prefs, "log", true),
+        parse_bool(prefs, "log", false),
         parse_packages(get(prefs, "packages", Dict{String, Any}())))
 end
 

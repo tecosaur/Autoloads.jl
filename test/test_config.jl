@@ -10,11 +10,11 @@ error_text(f) = try; f(); "no error"; catch e; sprint(showerror, e); end
 
 @testset "config defaults" begin
     cfg = parse_config(Dict{String, Any}())
-    @test cfg.stdlib === false
-    @test cfg.project == Set{String}()
+    @test cfg.stdlib === true
+    @test cfg.project === nothing
     @test cfg.policy == Background
     @test cfg.bindings == AllBindings
-    @test cfg.log === true
+    @test cfg.log === false
     @test isempty(cfg.packages)
 end
 
@@ -27,7 +27,7 @@ end
     @test parse_config(Dict("precompile" => "lazy")).policy == Lazy
     @test parse_config(Dict("precompile" => "background")).policy == Background
     @test parse_config(Dict("bindings" => "used")).bindings == UsedBindings
-    @test parse_config(Dict("log" => false)).log === false
+    @test parse_config(Dict("log" => true)).log === true
     cfg = parse_config(Dict("bindings" => "used", "packages" => Dict(
         "DataFrames" => Dict("skip" => ["@btime", "x"], "only" => ["a"], "bindings" => "all"),
         "Plots" => Dict{String, Any}())))

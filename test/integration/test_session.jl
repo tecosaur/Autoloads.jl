@@ -131,7 +131,7 @@ end
     with_a = seeded_catalog(FIXTURE_A_NAMES)
     project_catalog = seeded_catalog(FIXTURE_A_NAMES)
     projects = (; selecting = fixture_project(["FixtureA", "FixtureB"]; prefs = "project = [\"FixtureA\"]"),
-                unselected = fixture_project(["FixtureA"]),
+                unselected = fixture_project(["FixtureA"]; prefs = "project = false"),
                 without = fixture_project(String[]; prefs = "project = [\"FixtureA\"]"))
     stdlib_project = fixture_project(String[]; prefs = """
         stdlib = true

@@ -65,23 +65,22 @@ the autoload packages together with the global environment's own; a plain
 Settings live in ~[preferences.Autoloads]~ in the global environment's
 =Project.toml= or =LocalPreferences.toml=.
 
-| Key                        | Default        | Meaning                                                      |
-|----------------------------+----------------+--------------------------------------------------------------|
-| ~stdlib~                   | ~false~        | Also autoload names from the standard libraries              |
-| ~project~                  | ~false~        | ~true~ or a list: autoload the active project's dependencies |
-| ~precompile~               | ~"background"~ | ~"lazy"~ indexes without precompiling                        |
-| ~bindings~                 | ~"all"~        | ~"used"~ loads only the names used                           |
-| ~log~                      | ~true~         | ~false~ autoloads without the "Autoloading …" line           |
-| ~packages.<Name>.skip~     | ~[]~           | Names not to autoload                                        |
-| ~packages.<Name>.only~     | unset          | Autoload only these names                                    |
-| ~packages.<Name>.bindings~ | global setting | Per-package ~bindings~                                       |
+| Key                        | Default        | Meaning                                                       |
+|----------------------------+----------------+---------------------------------------------------------------|
+| ~stdlib~                   | ~true~         | Also autoload names from the standard libraries               |
+| ~project~                  | ~true~         | ~false~ or a list: autoload the active project's dependencies |
+| ~precompile~               | ~"background"~ | ~"lazy"~ indexes without precompiling                         |
+| ~bindings~                 | ~"all"~        | ~"used"~ loads only the names used                            |
+| ~log~                      | ~false~        | ~true~ announces each autoload with an info line              |
+| ~packages.<Name>.skip~     | ~[]~           | Names not to autoload                                         |
+| ~packages.<Name>.only~     | unset          | Autoload only these names                                     |
+| ~packages.<Name>.bindings~ | global setting | Per-package ~bindings~                                        |
 
-For example, to autoload the standard libraries, with ~@spawn~ coming from
-~Threads~ rather than ~Distributed~:
+For example, to have ~@spawn~ come from ~Threads~ rather than ~Distributed~
+(both provide it, so by default neither autoloads it):
 
 #+begin_src toml
 [preferences.Autoloads]
-stdlib = true
 packages.Distributed = {skip = ["@spawn"]}
 #+end_src
 

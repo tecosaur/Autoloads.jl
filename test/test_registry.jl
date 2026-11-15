@@ -13,7 +13,9 @@ const ID_X, ID_Y, ID_Z = pkg_id("X", 1), pkg_id("Y", 2), pkg_id("Z", 3)
 names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Symbol[]) =
     PkgNames(id, VersionNumber.(versions), Set([Symbol(id.name); exported]), Set(public), Set(reexported))
 
-cfg_of(; kwargs...) = parse_config(Dict{String, Any}(string(k) => v for (k, v) in kwargs))
+# Neither stdlibs nor the project autoload unless a test asks.
+cfg_of(; kwargs...) = parse_config(Dict{String, Any}("stdlib" => false, "project" => false,
+                                                     (string(k) => v for (k, v) in kwargs)...))
 no_graph = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}())
 graph_of(pairs...) = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(id.uuid => v for (id, v) in pairs),
                                    Dict{Base.UUID, Vector{Base.UUID}}())
