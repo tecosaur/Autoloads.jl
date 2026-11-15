@@ -18,5 +18,6 @@ public parse_config, load_config, package_config, bindings_for, autoload_names
 include("records.jl")
 include("config.jl")
 include("envs.jl")
+include("registry.jl")
 
 end
