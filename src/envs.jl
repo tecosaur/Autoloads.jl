@@ -17,13 +17,15 @@ struct ManifestGraph
     deps::Dict{Base.UUID, Vector{Base.UUID}}
 end
 
+"The directory of this Julia version's global environment (`@v#.#`)."
+global_env_dir() = dirname(Base.load_path_expand("@v#.#"))
+
 """
-    member_dir(global_dir = dirname(Base.load_path_expand("@v#.#")))
+    member_dir(global_dir = global_env_dir())
 
 The `autoloads` workspace member of the global environment in `global_dir`.
 """
-member_dir(global_dir = dirname(Base.load_path_expand("@v#.#"))) =
-    joinpath(global_dir, "autoloads")
+member_dir(global_dir = global_env_dir()) = joinpath(global_dir, "autoloads")
 
 "The package catalog file for this Julia version, in the first depot."
 catalog_path() = joinpath(first(DEPOT_PATH), "autoloads",
@@ -67,6 +69,19 @@ end
 dependency_uuids(names::AbstractVector, uuid_of) =
     [uuid_of[name] for name in names if haskey(uuid_of, name)]
 dependency_uuids(table::AbstractDict, _) = [Base.UUID(uuid) for uuid in values(table)]
+
+"""
+    environment(project_file) -> (; deps::Vector{Base.PkgId}, graph::ManifestGraph)
+
+The direct deps and manifest graph of `project_file`; empty for `nothing` or a
+missing file.
+"""
+function environment(project_file::Union{String, Nothing})
+    project_file === nothing &&
+        return (deps = Base.PkgId[], graph = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(),
+                                                           Dict{Base.UUID, Vector{Base.UUID}}()))
+    (deps = project_deps(project_file), graph = manifest_graph(project_file))
+end
 
 """
     dependency_closure(graph, uuid) -> Set{Base.UUID}

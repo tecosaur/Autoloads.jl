@@ -345,14 +345,6 @@ function report_once!(runtime::Runtime, flag::Symbol, message, err, backtrace)
     @error message exception = (err, backtrace)
 end
 
-"The direct deps and manifest graph of `project_file`; empty for `nothing` or a missing file."
-function environment(project_file::Union{String, Nothing})
-    project_file === nothing &&
-        return (deps = Base.PkgId[], graph = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(),
-                                                           Dict{Base.UUID, Vector{Base.UUID}}()))
-    (deps = project_deps(project_file), graph = manifest_graph(project_file))
-end
-
 wanted_versions(graph::ManifestGraph, ids) =
     Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => get(graph.versions, id.uuid, nothing) for id in ids)
 

@@ -64,6 +64,24 @@ function write_catalog_changes!(path::AbstractString, observations::Vector{Catal
     end
 end
 
+"""
+    clear_failures!(path, ids) -> Bool
+
+Drop every [`PkgFailure`](@ref) of the packages `ids` from the catalog at
+`path`, so they are indexed again, under the catalog lock. Returns whether
+the file was written: nothing is written when it has no such failure.
+"""
+function clear_failures!(path::AbstractString, ids)
+    is_cleared(r) = r isa PkgFailure && r.id in ids
+    any(is_cleared, read_catalog(path)) || return false
+    with_catalog_lock(path) do
+        records = read_catalog(path)
+        any(is_cleared, records) || return false
+        rewrite_catalog(path, group_by_id(filter(!is_cleared, records)))
+        true
+    end
+end
+
 # ── Helpers ──
 
 group_by_id(records) = foldl((groups, r) -> (push!(get!(groups, r.id, CatalogRecord[]), r); groups),

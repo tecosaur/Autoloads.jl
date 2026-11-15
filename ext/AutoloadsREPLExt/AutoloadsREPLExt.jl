@@ -9,7 +9,7 @@ module AutoloadsREPLExt
 
 using Autoloads, REPL
 using Autoloads: Registry, LoadRequest, is_candidate, manifest_graph, dependency_closure,
-    project_deps
+    project_deps, environment
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, PrecompilePolicy, Lazy, Background,
     run_julia, write_catalog_changes!, INTERRUPTED_EXIT_CODE
 using Autoloads: Catalog, Config, ConfigError, ManifestGraph, build_catalog, build_registry, autoload_set,

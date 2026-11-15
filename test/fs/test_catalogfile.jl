@@ -1,5 +1,6 @@
 using Test
-using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog
+using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog,
+    clear_failures!
 
 const CATALOG_UUID_A = Base.UUID("00000000-0000-0000-0000-0000000000b1")
 const CATALOG_UUID_B = Base.UUID("00000000-0000-0000-0000-0000000000b2")
@@ -39,6 +40,25 @@ catalog_names(uuid, name, version, exported...) =
         end
     end
 
+    @testset "clear failures" begin
+        mktempdir() do dir
+            path = joinpath(dir, "sub", "catalog-v1")
+            a, b = Base.PkgId(CATALOG_UUID_A, "A"), Base.PkgId(CATALOG_UUID_B, "B")
+            @test !clear_failures!(path, [a])
+            @test !ispath(dirname(path))
+            a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            failures = CatalogRecord[PkgFailure(a, v"1.1.0", "boom"), PkgFailure(a, nothing, "?"),
+                                     PkgFailure(b, v"2.0.0", "bang")]
+            write_catalog_changes!(path, CatalogRecord[a1; failures])
+            before = read(path)
+            @test !clear_failures!(path, [Base.PkgId(CATALOG_UUID_A, "Other")])
+            @test read(path) == before
+            @test clear_failures!(path, [a])
+            @test sort(read_catalog(path); by = catalog_line) == sort([a1, failures[3]]; by = catalog_line)
+            @test clear_failures!(path, Set([b]))
+            @test read_catalog(path) == [a1]
+        end
+    end
     @testset "rewrite round trip" begin
         mktempdir() do dir
             path = joinpath(dir, "catalog-v1")
