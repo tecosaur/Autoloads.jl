@@ -75,8 +75,9 @@ Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractSt
     Worker(runtime, indexer)
 
 The worker's own state: the built-in records and stdlib ids (computed once),
-and the configuration, observation and refresh errors logged since each last
-succeeded (see [`is_unreported!`](@ref)).
+the configuration, observation and refresh errors logged since each last
+succeeded (see [`is_unreported!`](@ref)), and the unknown `packages.<Name>`
+settings last warned about.
 """
 struct Worker
     runtime::Runtime
@@ -86,10 +87,12 @@ struct Worker
     reported_config_errors::Set{String}
     reported_observation_errors::Set{String}
     reported_refresh_errors::Set{String}
+    reported_unknown_packages::Set{String}
 end
 
 Worker(runtime::Runtime, indexer::Indexer) =
-    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}(), Set{String}())
+    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}(), Set{String}(),
+           Set{String}())
 
 "`Base.package_callbacks` entry: only enqueues an [`Observed`](@ref) event."
 struct ObserveLoad
@@ -281,6 +284,7 @@ function derive_session(worker::Worker)
     has_member || !isempty(selected) || return nothing, nothing
     autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
                             worker.stdlibs, [record.id for record in worker.builtins], cfg)
+    warn_unknown_packages!(worker.reported_unknown_packages, cfg, autoload)
     catalog = build_catalog([worker.builtins; read_healed_catalog(worker.runtime.catalog_path)])
     session = Session(catalog, build_registry(catalog, autoload, cfg), cfg, member,
                       Set(id.name for id in member_env.deps))
@@ -289,6 +293,21 @@ function derive_session(worker::Worker)
                 wanted_versions(member_env.graph, [member_env.deps; worker.stdlibs])]
     active === nothing || push!(plan, dirname(active) => wanted_versions(project_env.graph, selected))
     session, plan
+end
+
+"""
+Warn about `packages.<Name>` settings in `cfg` naming no package in
+`autoload` (as from `autoload_set`). `reported` holds the names last warned
+about, so each warns once, and again if it becomes known and then unknown.
+"""
+function warn_unknown_packages!(reported::Set{String}, cfg::Config, autoload::AbstractDict)
+    unknown = setdiff(keys(cfg.packages), (id.name for id in keys(autoload)))
+    newly_unknown = sort!(collect(setdiff(unknown, reported)))
+    isempty(newly_unknown) ||
+        @warn "Autoloads has settings for packages it does not autoload here: $(join(newly_unknown, ", ")). \
+               Check the `packages` names in [preferences.Autoloads], or add them with `pkg> autoloads add`."
+    empty!(reported)
+    union!(reported, unknown)
 end
 
 """
