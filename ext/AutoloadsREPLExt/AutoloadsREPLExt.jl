@@ -3,17 +3,19 @@ REPL integration for Autoloads: scans REPL input for references that an
 autoload package could satisfy, loads those packages just before the
 statements that need them, and keeps the catalog current by observing loads
 and indexing packages in a supervised subprocess, all coordinated by one
-session worker (see `session.jl`).
+session worker (see `session.jl`). Also suggests providers on `UndefVarError`
+(`hints.jl`) and completes autoloadable names (`complete.jl`).
 """
 module AutoloadsREPLExt
 
 using Autoloads, REPL
+using REPL: LineEdit
 using Autoloads: Registry, LoadRequest, is_candidate, manifest_graph, dependency_closure,
     project_deps, environment
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, PrecompilePolicy, Lazy, Background,
     run_julia, write_catalog_changes!, INTERRUPTED_EXIT_CODE
 using Autoloads: Catalog, Config, ConfigError, ManifestGraph, build_catalog, build_registry, autoload_set,
-    pending_loads, to_index, owner, read_catalog, extract_names, stdlib_ids, builtin_records, member_dir,
+    pending_loads, to_index, owner, names_at, read_catalog, extract_names, stdlib_ids, builtin_records, member_dir,
     catalog_path, load_config, parse_config
 
 include("scan.jl")
@@ -21,11 +23,13 @@ include("indexer.jl")
 include("load.jl")
 include("session.jl")
 include("hints.jl")
+include("complete.jl")
 
 function __init__()
     isinteractive() || return
     start_session!()
     install_transform()
+    install_completion()
     Base.Experimental.register_error_hint(undefvar_hint, UndefVarError)
 end
 
@@ -57,6 +61,12 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
         undefined_globals(stmt, @__MODULE__)
     end
     owner(reg, :wl)
+    # First TAB: the wrapper's merge, and the wrapper itself on the REPL's types.
+    for (text, region) in (("wl", 0 => 2), ("Workload.w", 9 => 10))
+        with_autoloadable((LineEdit.NamedCompletion[LineEdit.NamedCompletion("w")], region, true), session, text)
+    end
+    precompile(Core.kwcall, (@NamedTuple{hint::Bool}, typeof(LineEdit.complete_line),
+                             CompletionWrapper{REPL.REPLCompletionProvider}, LineEdit.PromptState, Module))
     precompile(Tuple{ObserveLoad, Base.PkgId})
     precompile(repl_transform, (Expr,))
     precompile(env_stamp, (Runtime,))
