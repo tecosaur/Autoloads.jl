@@ -19,8 +19,16 @@ const INDEXER_WAIT_S = 120
         PkgFailure(FIXTURE_C, v"0.1.0", "indexer timed out after 300 s while indexing")
     @test exit_failure(FIXTURE_C => nothing, 1, 0, false, 300) ==
         PkgFailure(FIXTURE_C, nothing, "indexer exited with code 1 while indexing")
+    @test exit_failure(in_progress, 0, 11, false, 300) ==
+        PkgFailure(FIXTURE_C, v"0.1.0", "indexer killed by signal 11 while indexing")  # segfault
+    @test exit_failure(in_progress, 0, 9, false, 300) ==
+        PkgFailure(FIXTURE_C, v"0.1.0", "indexer killed by signal 9 while indexing")   # OOM killer
     @test exit_failure(in_progress, 0, 0, false, 300) === nothing   # finished normally
-    @test exit_failure(in_progress, 0, 15, false, 300) === nothing  # external signal
+    @test exit_failure(in_progress, 0, 0, true, 300) === nothing    # timer fired as it finished
+    @test exit_failure(in_progress, 0, 15, true, 300) === nothing   # stopped by someone else
+    for signal in (2, 15, 1)                                        # SIGINT, SIGTERM, SIGHUP
+        @test exit_failure(in_progress, 0, signal, false, 300) === nothing
+    end
     @test exit_failure(in_progress, 130, 0, false, 300) === nothing # interrupted
     @test exit_failure(nothing, 3, 0, false, 300) === nothing       # before any package
     @test exit_failure(nothing, 0, 9, true, 300) === nothing
@@ -99,11 +107,14 @@ end
     end
     @testset "one run at a time; an interrupted run records nothing" begin
         pending = start_run(ix, Lazy, [FIXTURE_C]; env = ("FIXTUREC_HANG" => "1",))
-        timedwait(() -> occursin("indexing $(FIXTURE_C.uuid)", log_of(pending.path)), INDEXER_WAIT_S)
+        timedwait(() -> occursin("indexing $(FIXTURE_C.uuid)", log_of(pending.path)), INDEXER_WAIT_S) === :ok ||
+            error("indexer never announced FixtureC within $INDEXER_WAIT_S s; log:\n", log_of(pending.path))
         @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, pending.path, wanted([FIXTURE_C]), _ -> nothing)
         # The indexing lock holds the subprocess's pid.
         pid = parse(Int, first(split(read(pending.path * ".indexing", String))))
-        run(`kill -INT $pid`)
+        # Julia 1.12 segfaults on SIGINT with `exit_on_sigint(false)`, which then counts as a crash.
+        signal = VERSION >= v"1.13" ? "INT" : "TERM"
+        run(`kill -$signal $pid`)
         (; path, changed) = finish_run(pending)
         @test !changed
         @test isempty(read_catalog(path))
@@ -115,6 +126,10 @@ end
         @test failure_of(path, FIXTURE_C) ==
             PkgFailure(FIXTURE_C, v"0.1.0", "indexer timed out after 8 s while indexing")
         @test !ispath(path * ".indexing")  # released for the next run despite SIGKILL
+    end
+    @testset "nothing to index starts nothing" begin
+        @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"),
+                                          wanted(Base.PkgId[]), _ -> error("on_exit must not run"))
     end
     @testset "a held indexing lock stops the run" begin
         path = joinpath(mktempdir(), "catalog-v1")

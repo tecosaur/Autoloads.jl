@@ -14,7 +14,6 @@ include(joinpath(@__DIR__, "..", "records.jl"))
 include(joinpath(@__DIR__, "..", "catalogfile.jl"))
 
 const PKG_ID = Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg")
-const INTERRUPTED_EXIT_CODE = 130
 const MAX_MESSAGE_CHARS = 2000
 const Pidfile = Base.require(FILEWATCHING_ID).Pidfile
 

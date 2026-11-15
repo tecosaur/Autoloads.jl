@@ -30,6 +30,9 @@ end
 
 const CatalogRecord = Union{PkgNames, PkgFailure}
 
+"Exit code of an indexer subprocess that was interrupted (shell convention, 128 + SIGINT)."
+const INTERRUPTED_EXIT_CODE = 130
+
 Base.:(==)(a::PkgNames, b::PkgNames) =
     a.id == b.id && a.versions == b.versions && same_namespace(a, b)
 
