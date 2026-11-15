@@ -6,7 +6,7 @@
 const MAX_HINT_PROVIDERS = 3
 
 "How readily a package can be used, most ready first."
-@enum Availability DirectDep InProjectManifest OnLoadPath Elsewhere
+@enum Availability DirectDep InProjectManifest OnLoadPath AutoloadPackage Elsewhere
 
 "A provider as listed in the hint: `env` names the load-path environment for `OnLoadPath`."
 struct RankedProvider
@@ -17,18 +17,21 @@ struct RankedProvider
 end
 
 """
-    availability(id, deps, manifest, loadpath_env) -> (Availability, Union{String, Nothing})
+    availability(id, deps, manifest, member_deps, loadpath_env) -> (Availability, Union{String, Nothing})
 
 How readily `id` can be used given the active project's direct `deps` and
-`manifest` (package UUIDs). `loadpath_env(id)` gives the display name of the
-load-path environment providing `id`, or `nothing`; the name is returned for
-`OnLoadPath` and is `nothing` otherwise.
+`manifest`, and the autoloads member's direct `member_deps` (package UUIDs).
+`loadpath_env(id)` gives the display name of the load-path environment
+providing `id`, or `nothing`; the name is returned for `OnLoadPath` and is
+`nothing` otherwise.
 """
-function availability(id::Base.PkgId, deps::Set{Base.UUID}, manifest::Set{Base.UUID}, loadpath_env::Function)
+function availability(id::Base.PkgId, deps::Set{Base.UUID}, manifest::Set{Base.UUID}, member_deps::Set{Base.UUID},
+                      loadpath_env::Function)
     id.uuid in deps && return DirectDep, nothing
     id.uuid in manifest && return InProjectManifest, nothing
     env = loadpath_env(id)
-    env === nothing ? (Elsewhere, nothing) : (OnLoadPath, env)
+    env === nothing || return OnLoadPath, env
+    (id.uuid in member_deps ? AutoloadPackage : Elsewhere), nothing
 end
 
 """
@@ -62,6 +65,8 @@ function format_hint(var::Symbol, ranked::Vector{RankedProvider}, sources::Dict{
             print(io, "`pkg> add $name` (already resolved in the active project's manifest)")
         elseif p.availability == OnLoadPath
             print(io, "`using $name` (from $(p.env))")
+        elseif p.availability == AutoloadPackage
+            print(io, "`using $name` (an autoload package)")
         elseif has_member
             print(io, "`pkg> add $name`, or `pkg> autoloads add $name`")
         else
@@ -111,10 +116,12 @@ function undefvar_hint(io::IO, ex::UndefVarError)
         (; deps, graph) = environment(Base.active_project())
         deps_uuids = Set{Base.UUID}(id.uuid for id in deps)
         manifest = Set{Base.UUID}(keys(graph.versions))
-        avail(id) = availability(id, deps_uuids, manifest, loadpath_env)
+        member_project = joinpath(session === nothing ? member_dir() : session.member, "Project.toml")
+        member_deps = Set{Base.UUID}(id.uuid for id in project_deps(member_project))
+        avail(id) = availability(id, deps_uuids, manifest, member_deps, loadpath_env)
         ranked = rank_providers(providers, avail)
         sources = reexport_sources(providers, graph)
-        has_member = isfile(joinpath(session === nothing ? member_dir() : session.member, "Project.toml"))
+        has_member = isfile(member_project)
         print(io, format_hint(ex.var, ranked, sources, has_member))
     catch err
         err isa InterruptException && rethrow()

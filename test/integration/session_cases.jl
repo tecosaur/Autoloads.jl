@@ -236,9 +236,9 @@ elseif GROUP == "hints"
         @test occursin("`using Statistics` (from @stdlib)", hint_for(:mean))
     end
     activate!(bare)
-    @testset "providers that are only available elsewhere" begin
+    @testset "providers outside the active project and load path" begin
         @test hint_for(:fa) == header(:fa) *
-            "    - `pkg> add FixtureA`, or `pkg> autoloads add FixtureA`\n" *
+            "    - `using FixtureA` (an autoload package)\n" *
             "    - `pkg> add FixtureC`, or `pkg> autoloads add FixtureC`\n" *
             "    - `pkg> add FixtureB`, or `pkg> autoloads add FixtureB`, which re-exports it from FixtureA and FixtureC"
     end
