@@ -110,6 +110,17 @@ elseif GROUP == "sequencing"
         @test_throws MethodError run_input("x = 1; fa(x)")
         @test is_loaded(FIXTURE_A)
     end
+    @testset "only environment changes forget failed loads" begin
+        failing = Base.PkgId(Base.UUID(0xfa11), "Failing")
+        run_input("1")
+        push!(Ext.LOAD.failed, failing)
+        touch(CATALOG)
+        run_input("1")
+        @test failing in Ext.LOAD.failed
+        touch(joinpath(dirname(MEMBER), "Project.toml"))
+        run_input("1")
+        @test isempty(Ext.LOAD.failed)
+    end
     @testset "a stopped worker handles no more batches" begin
         before = current_session()
         Ext.stop_worker!(Ext.RUNTIME[])

@@ -62,9 +62,10 @@ the member manifest's version. `LOAD_PATH` is unchanged afterwards.
 Returns whether it loaded. A failure (including [`InconsistentVersions`](@ref)
 and an [`AutoloadFailure`](@ref) for a package that is not installed) is
 logged as one warning and recorded in `state.failed`; failed packages are
-not retried until [`forget_failures!`](@ref). Every call records `(req.id, req.name)` in `state.attempted`,
-except one interrupted by Ctrl-C: the `InterruptException` propagates and
-nothing is recorded, so the load can be retried.
+not retried until [`forget_failures!`](@ref). Every call records
+`(req.id, req.name)` in `state.attempted`, except one interrupted by Ctrl-C:
+the `InterruptException` propagates and nothing is recorded, so the load can
+be retried.
 """
 function load!(state::LoadState, req::LoadRequest, member::AbstractString)
     key = (req.id, req.name)

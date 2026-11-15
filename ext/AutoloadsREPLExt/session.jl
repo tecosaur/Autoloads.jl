@@ -44,7 +44,8 @@ const Event = Union{Refresh, Observed, Flush}
 
 # (mtime, size, inode) of each watched file.
 const FileStamp = Tuple{Float64, Int64, UInt64}
-const EnvStamp = Tuple{Union{String, Nothing}, NTuple{9, FileStamp}}
+# The catalog is apart: its changes call for a refresh, but not for retrying failed loads.
+const EnvStamp = @NamedTuple{active::Union{String, Nothing}, environment::NTuple{8, FileStamp}, catalog::FileStamp}
 
 """
     Runtime(events, member, catalog_path)
@@ -104,8 +105,9 @@ const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
 Start this process's session: register load observation and environment
 change notification, start the worker (stopped by [`stop_worker!`](@ref) at
 exit) and request the first refresh. Inputs pass through
-[`repl_transform`](@ref) unchanged until the first session is derived. Once started, later calls return the running session's runtime
-unchanged (`__init__` starts it in interactive sessions).
+[`repl_transform`](@ref) unchanged until the first session is derived. Once
+started, later calls return the running session's runtime unchanged
+(`__init__` starts it in interactive sessions).
 """
 function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path())
     RUNTIME[] === nothing || return RUNTIME[]
@@ -140,13 +142,13 @@ end
 """
     repl_transform(ex) -> Any
 
-The REPL AST transform. When the session's environment files changed since
-the last input, requests a refresh and forgets failed loads (see
-[`forget_failures!`](@ref)). With a session and `Main` active, a
-statement that imports a member-only package is evaluated through
-[`eval_with_member`](@ref) and any other statement that could need an
-autoload is preceded by a [`prepare_statement`](@ref) call; other input is
-returned as is. Never throws, except `InterruptException`: an internal error
+The REPL AST transform. When the session's environment files or catalog
+changed since the last input, requests a refresh and, unless only the
+catalog changed, forgets failed loads (see [`forget_failures!`](@ref)). With
+a session and `Main` active, a statement that imports a member-only package
+is evaluated through [`eval_with_member`](@ref) and any other statement that
+could need an autoload is preceded by a [`prepare_statement`](@ref) call;
+other input is returned as is. Never throws, except `InterruptException`: an internal error
 is logged once per session and `ex` returned.
 """
 function repl_transform(ex)
@@ -319,10 +321,11 @@ end
 # ── Transform ──
 
 function transform_input(runtime::Runtime, ex)
-    stamp = env_stamp(runtime)
-    if stamp != runtime.stamp
+    stamp, previous = env_stamp(runtime), runtime.stamp
+    if stamp != previous
         runtime.stamp = stamp
-        forget_failures!(LOAD)
+        (previous === nothing || (stamp.active, stamp.environment) != (previous.active, previous.environment)) &&
+            forget_failures!(LOAD)
         put!(runtime.events, Refresh())
     end
     session = @atomic SESSION.session
@@ -346,15 +349,15 @@ end
 
 """
 The active project and the stamps of the files whose change calls for a
-refresh: the root and active projects with their manifests and local
-preferences, and the catalog.
+refresh: the `environment` (the root and active projects with their
+manifests and local preferences) and the `catalog`.
 """
 function env_stamp(runtime::Runtime)
     active = Base.active_project()
     root_project = joinpath(dirname(runtime.member), "Project.toml")
     files = (root_project, manifest_of(root_project), preferences_files(root_project)...,
-             active, manifest_of(active), preferences_files(active)..., runtime.catalog_path)
-    (active, map(file_stamp, files))
+             active, manifest_of(active), preferences_files(active)...)
+    (; active, environment = map(file_stamp, files), catalog = file_stamp(runtime.catalog_path))
 end
 
 # ── Helpers ──
