@@ -31,14 +31,15 @@ The `autoloads` workspace member of the global environment in `global_dir`.
 member_dir(global_dir = global_env_dir()) = joinpath(global_dir, "autoloads")
 
 """
-    catalog_path() -> String
+    state_dir(version = VERSION) -> String
 
-The package catalog file for this Julia version, under the user's state
-directory as BaseDirs.jl's `User.state` finds it: `XDG_STATE_HOME` when it is
-an absolute path, otherwise `~/.local/state`, `~/Library/Application Support`
+The Autoloads state of Julia `version`'s minor (its catalog, and changes
+deferred to it): `julia/autoloads/v#.#` in the user's state directory, as
+BaseDirs.jl's `User.state` finds it: `XDG_STATE_HOME` when it is an
+absolute path, otherwise `~/.local/state`, `~/Library/Application Support`
 on macOS, or `LOCALAPPDATA` on Windows.
 """
-function catalog_path()
+function state_dir(version::VersionNumber = VERSION)
     xdg_state = get(ENV, "XDG_STATE_HOME", "")
     state = if isabspath(xdg_state)
         xdg_state
@@ -49,8 +50,11 @@ function catalog_path()
     else
         joinpath(homedir(), ".local", "state")
     end
-    joinpath(state, "autoloads", "v$(VERSION.major).$(VERSION.minor)", "catalog")
+    joinpath(state, "julia", "autoloads", "v$(version.major).$(version.minor)")
 end
+
+"The package catalog file for this Julia version."
+catalog_path() = joinpath(state_dir(), "catalog")
 
 """
     project_deps(project_file) -> Vector{Base.PkgId}

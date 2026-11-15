@@ -42,7 +42,7 @@ end
 
 @testset "member_dir and catalog_path" begin
     @test member_dir("/g") == joinpath("/g", "autoloads")
-    tail = joinpath("autoloads", "v$(VERSION.major).$(VERSION.minor)", "catalog")
+    tail = joinpath("julia", "autoloads", "v$(VERSION.major).$(VERSION.minor)", "catalog")
     withenv("XDG_STATE_HOME" => "/state") do
         @test catalog_path() == joinpath("/state", tail)
     end
