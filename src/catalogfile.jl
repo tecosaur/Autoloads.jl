@@ -1,6 +1,6 @@
-# The on-disk catalog: one record per line. Reads take no lock and skip torn
-# lines; writes are rare, serialised by a pidfile lock, and never lose another
-# process's write. Depends only on Base (plus FileWatching, required lazily) so
+# The on-disk catalog: one record per line. Reads take no lock unless the file
+# has torn lines, which they remove; writes are rare, serialised by a pidfile
+# lock, and never lose another process's write. Depends only on Base (plus FileWatching, required lazily) so
 # that the standalone indexer script can include it after `records.jl`.
 
 const FILEWATCHING_ID = Base.PkgId(Base.UUID("7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"), "FileWatching")
@@ -10,20 +10,27 @@ const LOCK_STALE_AGE_S = 60
     read_catalog(path) -> Vector{CatalogRecord}
 
 Read the records in `path`, in file order, without locking. A missing file
-gives no records; malformed (e.g. torn) lines are skipped with one warning
-giving their count.
+gives no records. Malformed (e.g. torn) lines are skipped and removed from
+the file under the catalog lock, with one warning giving their count; if
+they cannot be removed, that is warned of once per session instead.
 """
 function read_catalog(path::AbstractString)
-    isfile(path) || return CatalogRecord[]
-    records = CatalogRecord[]
-    malformed = 0
-    for line in eachline(path)
-        isempty(line) && continue
-        record = parse_catalog_line(line)
-        record === nothing ? (malformed += 1) : push!(records, record)
+    records, malformed = parse_catalog_file(path)
+    malformed == 0 && return records
+    try
+        # Re-read under the lock, so a line still being appended is not taken for torn.
+        with_catalog_lock(path) do
+            locked_records, locked_malformed = parse_catalog_file(path)
+            if locked_malformed > 0
+                rewrite_catalog(path, group_by_id(locked_records))
+                @warn "Removed $locked_malformed malformed catalog lines" path
+            end
+            locked_records
+        end
+    catch err
+        @warn "Skipped $malformed malformed catalog lines, which could not be removed" path exception = err maxlog = 1
+        records
     end
-    malformed > 0 && @warn "Skipped $malformed malformed catalog lines" path
-    records
 end
 
 """
@@ -44,19 +51,22 @@ end
 Fold `observations` into the catalog at `path` with [`merge_observation`](@ref),
 under the catalog lock and against the file's current contents. Returns
 whether the file was written: nothing is written when no record changes, new
-ids are appended, and any other change rewrites the file atomically.
+ids are appended, and any other change rewrites the file atomically, as does
+removing malformed lines (with a warning).
 """
 function write_catalog_changes!(path::AbstractString, observations::Vector{CatalogRecord})
     with_catalog_lock(path) do
-        file_records = group_by_id(read_catalog(path))
+        parsed, malformed = parse_catalog_file(path)
+        file_records = group_by_id(parsed)
         merged = copy(file_records)
         for observation in observations
             merged[observation.id] = merge_observation(get(merged, observation.id, CatalogRecord[]), observation)
         end
         changed = [id for (id, records) in merged if get(file_records, id, nothing) != records]
-        isempty(changed) && return false
-        if any(in(keys(file_records)), changed)
+        isempty(changed) && malformed == 0 && return false
+        if malformed > 0 || any(in(keys(file_records)), changed)
             rewrite_catalog(path, merged)
+            malformed > 0 && @warn "Removed $malformed malformed catalog lines" path
         else
             append_catalog(path, [r for id in changed for r in merged[id]])
         end
@@ -75,7 +85,7 @@ function clear_failures!(path::AbstractString, ids)
     is_cleared(r) = r isa PkgFailure && r.id in ids
     any(is_cleared, read_catalog(path)) || return false
     with_catalog_lock(path) do
-        records = read_catalog(path)
+        records = first(parse_catalog_file(path))
         any(is_cleared, records) || return false
         rewrite_catalog(path, group_by_id(filter(!is_cleared, records)))
         true
@@ -83,6 +93,19 @@ function clear_failures!(path::AbstractString, ids)
 end
 
 # ── Helpers ──
+
+"The records in `path` (none if it is missing) and the number of malformed lines."
+function parse_catalog_file(path::AbstractString)
+    records = CatalogRecord[]
+    malformed = 0
+    isfile(path) || return records, malformed
+    for line in eachline(path)
+        isempty(line) && continue
+        record = parse_catalog_line(line)
+        record === nothing ? (malformed += 1) : push!(records, record)
+    end
+    records, malformed
+end
 
 group_by_id(records) = foldl((groups, r) -> (push!(get!(groups, r.id, CatalogRecord[]), r); groups),
                              records; init = Dict{Base.PkgId, Vector{CatalogRecord}}())

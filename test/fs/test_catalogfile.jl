@@ -84,9 +84,9 @@ catalog_names(uuid, name, version, exported...) =
             line = catalog_line(good)
             write(path, line * "\n" * line[1:end-12])
             b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
-            @test (@test_logs (:warn, r"1 malformed") write_catalog_changes!(path, CatalogRecord[b1]))
-            records = @test_logs (:warn, r"1 malformed") read_catalog(path)
-            @test b1 in records
+            @test (@test_logs (:warn, r"Removed 1 malformed") write_catalog_changes!(path, CatalogRecord[b1]))
+            records = @test_logs read_catalog(path)
+            @test sort(records; by = r -> r.id.name) == [good, b1]
         end
     end
 
@@ -111,8 +111,20 @@ catalog_names(uuid, name, version, exported...) =
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B, :h))
             write(path, catalog_line(good) * "\n" * line[1:end-12])
-            records = @test_logs (:warn, r"1 malformed") read_catalog(path)
+            records = @test_logs (:warn, r"Removed 1 malformed") read_catalog(path)
             @test records == [good]
+            @test (@test_logs read_catalog(path)) == [good]
+            @test !write_catalog_changes!(path, CatalogRecord[good])
+            # In a read-only directory the lines stay, and the warning is not repeated.
+            write(path, catalog_line(good) * "\n" * line[1:end-12])
+            chmod(dir, 0o555)
+            try
+                logger = Test.TestLogger(; respect_maxlog = true)
+                @test Base.CoreLogging.with_logger(() -> [read_catalog(path), read_catalog(path)], logger) == [[good], [good]]
+                @test occursin("could not be removed", only(logger.logs).message)
+            finally
+                chmod(dir, 0o755)
+            end
         end
     end
 
