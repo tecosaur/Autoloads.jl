@@ -258,6 +258,12 @@ end
             end
             missing_member = (; global_dir = mktempdir(), catalog)
             @test_throws MemberMissing Autoloads.add(["FixtureA"]; missing_member...)
+            @testset "names as separate arguments" begin
+                @test_throws MemberMissing Autoloads.add("FixtureA", "FixtureB"; missing_member...)
+                @test_throws MemberMissing Autoloads.remove("FixtureA"; missing_member.global_dir)
+                @test_throws MemberMissing Autoloads.update("FixtureA"; missing_member.global_dir)
+                @test_throws ArgumentError Autoloads.add(; missing_member...)
+            end
             @test occursin("autoloads init", sprint(showerror, MemberMissing(Autoloads.member_dir(missing_member.global_dir))))
         end
     finally

@@ -87,6 +87,7 @@ end
 
 """
     add(pkgs::Vector{String})
+    add(pkgs::AbstractString...)
 
 Add packages to the global autoloads environment: names are added from the
 registries, and paths of existing directories are developed. Recorded
@@ -100,7 +101,7 @@ The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Example
 ```julia
-Autoloads.add(["Example"])
+Autoloads.add("Example")
 ```
 """
 function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir(),
@@ -118,8 +119,11 @@ function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir()
     end
 end
 
+add(pkgs::AbstractString...; kwargs...) = add(collect(String, pkgs); kwargs...)
+
 """
     remove(pkgs::Vector{String})
+    remove(pkgs::AbstractString...)
 
 Remove the packages named `pkgs` from the global autoloads environment.
 The `global_dir` keyword is internal, for testing.
@@ -131,7 +135,7 @@ The `global_dir` keyword is internal, for testing.
 
 # Example
 ```julia
-Autoloads.remove(["Example"])
+Autoloads.remove("Example")
 ```
 """
 function remove(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir())
@@ -140,8 +144,11 @@ function remove(pkgs::Vector{String}; global_dir::AbstractString = global_env_di
     notify_env_change()
 end
 
+remove(pkgs::AbstractString...; kwargs...) = remove(collect(String, pkgs); kwargs...)
+
 """
     update(pkgs::Vector{String} = String[])
+    update(pkgs::AbstractString...)
 
 Update the packages named `pkgs` of the global environment and its
 autoloads member, or all of their packages when `pkgs` is empty, in one
@@ -162,6 +169,8 @@ function update(pkgs::Vector{String} = String[]; global_dir::AbstractString = gl
     run_pkg_operation(:update, pkgs, pkgs, global_dir)
     notify_env_change()
 end
+
+update(pkg::AbstractString, pkgs::AbstractString...; kwargs...) = update(String[pkg, pkgs...]; kwargs...)
 
 """
     status(io::IO = stdout)
