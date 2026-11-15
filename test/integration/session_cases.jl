@@ -126,7 +126,7 @@ elseif GROUP == "stdlib"
     @testset "batching" begin
         runtime = Ext.Runtime(Channel{Ext.Event}(Inf), MEMBER, CATALOG)
         extension = Base.PkgId(Ext)
-        ids = [Base.PkgId(Autoloads), extension, Base.PkgId(Test), Base.PkgId(Logging)]
+        ids = [Base.PkgId(Autoloads), extension]
         foreach(i -> put!(runtime.events, Ext.Observed(ids[mod1(i, length(ids))])), 1:50)
         worker = Ext.Worker(runtime, Ext.Indexer())
         before = catalog_lines()
@@ -194,6 +194,18 @@ elseif GROUP == "project"
         push!(LOAD_PATH, dirname(selecting))
         activate!(without)
         @test eventually(not_autoloads(:fa))
+        pop!(LOAD_PATH)
+    end
+    @testset "local preferences beside the active project" begin
+        activate!(selecting)
+        @test eventually(autoloads(:fa))
+        local_prefs = joinpath(dirname(selecting), "LocalPreferences.toml")
+        write(local_prefs, "[Autoloads]\nproject = []\n")
+        run_input("1")
+        @test eventually(not_autoloads(:fa))
+        rm(local_prefs)
+        run_input("1")
+        @test eventually(autoloads(:fa))
     end
 elseif GROUP == "observe-again"
     start_session!()
@@ -205,6 +217,23 @@ elseif GROUP == "observe-again"
         @test is_loaded(FIXTURE_B)
         flush_worker()
         @test (read(CATALOG), mtime(CATALOG)) == before
+    end
+elseif GROUP == "unwritable"
+    @testset "an unwritable catalog still gives a session" begin
+        logger = Test.TestLogger(min_level = Logging.Warn)
+        with_logger(start_session!, logger)
+        @test start_session!() === Ext.RUNTIME[]
+        await_session(autoloads(:fa))
+        events = Ext.RUNTIME[].events
+        for _ in 1:3
+            before = current_session()
+            put!(events, Ext.Observed(Base.PkgId(Test)))
+            put!(events, Ext.Refresh())
+            flush_worker()
+            @test current_session() !== before
+        end
+        @test length(logger.logs) == 1
+        @test only(logger.logs).message == "Autoloads failed to record loaded packages in its catalog"
     end
 else
     error("Unknown session case group $(repr(GROUP))")

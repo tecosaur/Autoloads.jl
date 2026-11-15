@@ -43,42 +43,44 @@ const Event = Union{Refresh, Observed, Flush}
 
 # (mtime, size, inode) of each watched file.
 const FileStamp = Tuple{Float64, Int64, UInt64}
-const EnvStamp = Tuple{Union{String, Nothing}, NTuple{5, FileStamp}}
+const EnvStamp = Tuple{Union{String, Nothing}, NTuple{9, FileStamp}}
 
 """
     Runtime(events, member, catalog_path)
 
 One session's fixed parts: the worker's event channel, the autoloads `member`
 directory and the catalog file. `stamp` (the environment files as last seen
-by the transform) and `has_reported_failure` belong to the REPL backend task.
+by the transform) and the failure flags belong to the REPL backend task.
 """
 mutable struct Runtime
     const events::Channel{Event}
     const member::String
     const catalog_path::String
     stamp::Union{EnvStamp, Nothing}
-    has_reported_failure::Bool
+    has_reported_transform_failure::Bool
+    has_reported_prepare_failure::Bool
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractString) =
-    Runtime(events, String(member), String(catalog_path), nothing, false)
+    Runtime(events, String(member), String(catalog_path), nothing, false, false)
 
 """
     Worker(runtime, indexer)
 
 The worker's own state: the built-in records and stdlib ids (computed once),
-and the configuration errors already reported.
+and the configuration and observation errors already reported.
 """
 struct Worker
     runtime::Runtime
     indexer::Indexer
     builtins::Vector{PkgNames}
     stdlibs::Vector{Base.PkgId}
-    reported_errors::Set{String}
+    reported_config_errors::Set{String}
+    reported_observation_errors::Set{String}
 end
 
 Worker(runtime::Runtime, indexer::Indexer) =
-    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}())
+    Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}())
 
 "`Base.package_callbacks` entry: only enqueues an [`Observed`](@ref) event."
 struct ObserveLoad
@@ -97,10 +99,11 @@ const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
 Start this process's session: register load observation and environment
 change notification, start the worker and request the first refresh. Inputs
 pass through [`repl_transform`](@ref) unchanged until the first session is
-derived. Call at most once per process (`__init__` does, in interactive
-sessions).
+derived. Once started, later calls return the running session's runtime
+unchanged (`__init__` starts it in interactive sessions).
 """
 function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path())
+    RUNTIME[] === nothing || return RUNTIME[]
     runtime = Runtime(Channel{Event}(Inf), member, catalog)
     events = runtime.events
     RUNTIME[] = runtime
@@ -121,8 +124,8 @@ the last input, requests a refresh. With a session and `Main` active, a
 statement that imports a member-only package is evaluated through
 [`eval_with_member`](@ref) and any other statement that could need an
 autoload is preceded by a [`prepare_statement`](@ref) call; other input is
-returned as is. Never throws: an internal error is logged once per session
-and `ex` returned.
+returned as is. Never throws, except `InterruptException`: an internal error
+is logged once per session and `ex` returned.
 """
 function repl_transform(ex)
     runtime = RUNTIME[]
@@ -131,7 +134,7 @@ function repl_transform(ex)
         transform_input(runtime, ex)
     catch err
         err isa InterruptException && rethrow()
-        report_failure!(runtime, "Autoloads transform failed", err, catch_backtrace())
+        report_once!(runtime, :has_reported_transform_failure, "Autoloads transform failed", err, catch_backtrace())
         ex
     end
 end
@@ -149,11 +152,12 @@ function prepare_statement(stmt)
     session === nothing && return nothing
     try
         load_pending!(session, statement_macros(stmt))
-        # Lower in the newest world, so macros just loaded expand.
-        Base.invokelatest(load_pending!, session, undefined_globals(stmt, Main))
+        # Lowering runs in the newest world too, so macros just loaded expand.
+        Base.invokelatest(() -> load_pending!(session, undefined_globals(stmt, Main)))
     catch err
         is_interrupt(err) && rethrow()
-        report_failure!(RUNTIME[]::Runtime, "Autoloads failed to prepare a statement", err, catch_backtrace())
+        report_once!(RUNTIME[]::Runtime, :has_reported_prepare_failure, "Autoloads failed to prepare a statement",
+                     err, catch_backtrace())
     end
     nothing
 end
@@ -183,10 +187,24 @@ function next_batch!(events::Channel{Event}, first::Event = take!(events))
     batch
 end
 
-"Record the observed packages, then refresh once if the catalog or the environment changed."
+"""
+Record the observed packages, then refresh once if the catalog or the
+environment changed. A failed observation is logged (once per distinct
+error) and never prevents the refresh.
+"""
 function handle_batch!(worker::Worker, batch::Vector{Event})
     observed = unique(event.id for event in batch if event isa Observed)
-    has_written = observe!(worker, observed)
+    has_written = try
+        observe!(worker, observed)
+    catch err
+        message = sprint(showerror, err)
+        if !(message in worker.reported_observation_errors)
+            push!(worker.reported_observation_errors, message)
+            @error "Autoloads failed to record loaded packages in its catalog" packages = observed exception =
+                (err, catch_backtrace())
+        end
+        false
+    end
     (has_written || any(event -> event isa Refresh, batch)) && refresh!(worker)
     nothing
 end
@@ -239,15 +257,20 @@ function derive_session(worker::Worker)
     session, plan
 end
 
-"`load_config()`, or `nothing` after logging a `ConfigError` (once per distinct error)."
+"""
+`load_config()`, or `nothing` after logging a `ConfigError` once per distinct
+error; valid settings forget past errors, so a reintroduced one logs again.
+"""
 function read_config!(worker::Worker)
     try
-        load_config()
+        cfg = load_config()
+        empty!(worker.reported_config_errors)
+        cfg
     catch err
         err isa ConfigError || rethrow()
         message = sprint(showerror, err)
-        message in worker.reported_errors && return nothing
-        push!(worker.reported_errors, message)
+        message in worker.reported_config_errors && return nothing
+        push!(worker.reported_config_errors, message)
         @error "Autoloads is off until its settings are fixed" exception = err
         nothing
     end
@@ -293,11 +316,16 @@ function transform_statements(session::Session, ex)
     end
 end
 
-"The active project and the stamps of the files whose change calls for a refresh."
+"""
+The active project and the stamps of the files whose change calls for a
+refresh: the root and active projects with their manifests and local
+preferences, and the catalog.
+"""
 function env_stamp(runtime::Runtime)
     active = Base.active_project()
     root_project = joinpath(dirname(runtime.member), "Project.toml")
-    files = (root_project, manifest_of(root_project), active, manifest_of(active), runtime.catalog_path)
+    files = (root_project, manifest_of(root_project), preferences_files(root_project)...,
+             active, manifest_of(active), preferences_files(active)..., runtime.catalog_path)
     (active, map(file_stamp, files))
 end
 
@@ -310,10 +338,10 @@ function load_pending!(session::Session, names)
     end
 end
 
-"Log `message` with `err`, unless something already failed in this session's backend calls."
-function report_failure!(runtime::Runtime, message, err, backtrace)
-    runtime.has_reported_failure && return
-    runtime.has_reported_failure = true
+"Log `message` with `err` unless the `flag` field of `runtime` says it was already logged."
+function report_once!(runtime::Runtime, flag::Symbol, message, err, backtrace)
+    getfield(runtime, flag) && return
+    setfield!(runtime, flag, true)
     @error message exception = (err, backtrace)
 end
 
@@ -330,6 +358,10 @@ wanted_versions(graph::ManifestGraph, ids) =
 
 manifest_of(project_file::Union{String, Nothing}) =
     project_file === nothing || !isfile(project_file) ? nothing : Base.project_file_manifest_path(project_file)
+
+# The files Base reads preferences from beside `project_file`, besides itself.
+preferences_files(project_file::Union{String, Nothing}) = project_file === nothing ? (nothing, nothing) :
+    (joinpath(dirname(project_file), "LocalPreferences.toml"), joinpath(dirname(project_file), "JuliaLocalPreferences.toml"))
 
 function file_stamp(path::Union{String, Nothing})
     path === nothing && return MISSING_FILE_STAMP

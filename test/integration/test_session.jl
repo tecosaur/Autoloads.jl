@@ -2,7 +2,7 @@
 module TestSession
 
 using Test, REPL, Autoloads
-using Autoloads: PkgNames, CatalogRecord, extract_names, stdlib_ids, write_catalog_changes!, run_julia
+using Autoloads: PkgNames, CatalogRecord, stdlib_ids, write_catalog_changes!, run_julia
 
 include("setup.jl")
 
@@ -12,8 +12,42 @@ const AUTOLOADS_UUID = Base.PkgId(Autoloads).uuid
 # The member group develops FixtureB into its member, so it gets a workspace of its own.
 const SHARED = build_workspace(; fixtures = (FIXTURE_A,))
 const CHANGING = build_workspace(; fixtures = (FIXTURE_A,))
+# Stdlibs whose real names a test relies on (`@spawn`, `status`), or that
+# every catalog write loads (FileWatching).
+const REAL_STDLIBS = ("Distributed", "Pkg", "FileWatching")
+
+"""
+The namespaces of the `REAL_STDLIBS`, extracted in a subprocess whose depot
+path starts with the workspace's, so no cache lands in the user's depot.
+"""
+function real_stdlib_records(ws)
+    script = """
+        push!(LOAD_PATH, ARGS[1])
+        using Autoloads
+        for id in Autoloads.stdlib_ids()
+            id.name in ARGS[2:end] && println(Autoloads.catalog_line(Autoloads.extract_names(Base.require(id), id)))
+        end
+        """
+    output = IOBuffer()
+    process = withenv("JULIA_DEPOT_PATH" => ws.depot_path, "JULIA_LOAD_PATH" => nothing, "JULIA_PROJECT" => nothing) do
+        run_julia(`-e $script $TEST_PROJECT $REAL_STDLIBS`; project = nothing, output)
+    end
+    wait(process)
+    text = String(take!(output))
+    success(process) || error("Extracting the names of $(join(REAL_STDLIBS, ", ")) failed:\n", text)
+    CatalogRecord[Autoloads.parse_catalog_line(line) for line in split(text, '\n'; keepempty = false)]
+end
+
+"A record offering only the stdlib's own name, at its version, without loading it."
+function stdlib_stub(id::Base.PkgId)
+    version = get(Base.parsed_toml(joinpath(Sys.STDLIB, id.name, "Project.toml")), "version", nothing)
+    PkgNames(id, version === nothing ? VersionNumber[] : [VersionNumber(version)], Set([Symbol(id.name)]),
+             Set{Symbol}(), Set{Symbol}())
+end
+
 # Seeded records are never re-indexed, so sessions start without indexing them.
-const STDLIB_RECORDS = CatalogRecord[extract_names(Base.require(id), id) for id in stdlib_ids()]
+const STDLIB_RECORDS = CatalogRecord[real_stdlib_records(SHARED);
+                                     [stdlib_stub(id) for id in stdlib_ids() if id.name ∉ REAL_STDLIBS]]
 const FIXTURE_A_NAMES = PkgNames(FIXTURE_A, [v"0.1.0"], Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                                  Set([:fa_public]), Set{Symbol}())
 const FIXTURE_UUIDS = Dict(id.name => id.uuid for id in (FIXTURE_A, FIXTURE_B, FIXTURE_C))
@@ -77,7 +111,11 @@ function loads_only_autoloads()
         print(collect(setdiff(keys(Base.loaded_modules), before)) == [Base.PkgId(Autoloads)])
         """
     output = IOBuffer()
-    wait(run_julia(`-e $script $TEST_PROJECT`; project = nothing, output))
+    process = withenv("JULIA_DEPOT_PATH" => SHARED.depot_path, "JULIA_LOAD_PATH" => nothing,
+                      "JULIA_PROJECT" => nothing) do
+        run_julia(`-e $script $TEST_PROJECT`; project = nothing, output)
+    end
+    wait(process)
     String(take!(output)) == "true"
 end
 
@@ -100,10 +138,14 @@ end
                         project = stdlib_project),
             start_cases("project", SHARED, no_member, project_catalog, projects.unselected, projects.without,
                         projects.selecting; project = projects.selecting)]
+    unwritable = seeded_catalog(FIXTURE_A_NAMES)
+    chmod(dirname(unwritable), 0o555)
+    push!(runs, start_cases("unwritable", SHARED, SHARED.member, unwritable))
     @testset "using Autoloads loads nothing else" begin
         @test loads_only_autoloads()
     end
     foreach(check_cases, runs)
+    chmod(dirname(unwritable), 0o755)
     @testset "an unchanged observation writes nothing" begin
         check_cases(start_cases("observe-again", SHARED, no_member, project_catalog; project = projects.selecting))
     end
