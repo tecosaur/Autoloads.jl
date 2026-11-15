@@ -88,6 +88,19 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
             Autoloads.ENV_CHANGED[] = nothing
         end
     end
+    @testset "add creates a missing member first" begin
+        env = fresh_global_env("""
+            [deps]
+            Autoloads = "$AUTOLOADS_UUID"
+
+            [sources]
+            Autoloads = {path = "$(escape_string(AUTOLOADS_DIR))"}
+            """)
+        _, output = captured(() -> Autoloads.add([joinpath(FIXTURES_DIR, "FixtureA")]; global_dir = env.global_dir,
+                                                 catalog = joinpath(mktempdir(), "catalog")), env.depot_path)
+        @test occursin("Created", output)
+        @test member_names(joinpath(env.global_dir, "autoloads")) == ["FixtureA"]
+    end
     @testset "carries over the newest older member" begin
         env = fresh_global_env("""
             [deps]
@@ -260,9 +273,7 @@ end
                 @test notified[] == 6
             end
             missing_member = (; global_dir = mktempdir(), catalog)
-            @test_throws MemberMissing Autoloads.add(["FixtureA"]; missing_member...)
             @testset "names as separate arguments" begin
-                @test_throws MemberMissing Autoloads.add("FixtureA", "FixtureB"; missing_member...)
                 @test_throws MemberMissing Autoloads.remove("FixtureA"; missing_member.global_dir)
                 @test_throws MemberMissing Autoloads.update("FixtureA"; missing_member.global_dir)
                 @test_throws ArgumentError Autoloads.add(; missing_member...)

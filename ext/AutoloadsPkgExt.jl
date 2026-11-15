@@ -40,7 +40,8 @@ const COMMANDS = try
                     autoloads add pkg ...
 
                 Add packages to the global autoloads environment, by name or (for an existing
-                directory) by path, which is developed.
+                directory) by path, which is developed. The environment is created first
+                (as by `autoloads init`) if it does not exist yet.
                 """),
         command(name = "remove", short_name = "rm", api = Autoloads.remove, should_splat = false,
                 arg_count = 1 => Inf, completions = :complete_installed_packages,

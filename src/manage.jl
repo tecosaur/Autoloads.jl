@@ -92,14 +92,14 @@ end
     add(pkgs::Vector{String})
     add(pkgs::AbstractString...)
 
-Add packages to the global autoloads environment: names are added from the
+Add packages to the global autoloads environment, first creating it with
+[`init`](@ref) if it does not exist yet: names are added from the
 registries, and paths of existing directories are developed. Recorded
 indexing failures of the packages are cleared, so they are indexed again.
 The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Raises
 - `ArgumentError` when `pkgs` is empty.
-- [`MemberMissing`](@ref) before [`init`](@ref) has run.
 - [`PkgOperationFailed`](@ref) when Pkg fails.
 
 # Example
@@ -110,7 +110,8 @@ Autoloads.add("Example")
 function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir(),
              catalog::AbstractString = catalog_path())
     isempty(pkgs) && throw(ArgumentError("Autoloads.add: no packages given"))
-    member = existing_member(global_dir)
+    member = member_dir(global_dir)
+    isfile(joinpath(member, "Project.toml")) || init(; global_dir)
     specs = [isdir(expanduser(pkg)) ? abspath(expanduser(pkg)) : pkg for pkg in pkgs]
     # A failed `Pkg.add` may follow a successful `Pkg.develop`, so notify regardless.
     try

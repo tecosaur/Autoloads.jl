@@ -10,8 +10,7 @@ about them.
 
 ** Setup
 
-Add Autoloads to your global environment, load it from your startup file, and
-create the autoloads environment:
+Add Autoloads to your global environment, and load it from your startup file:
 
 #+begin_src julia-repl
 pkg> add Autoloads
@@ -22,11 +21,8 @@ pkg> add Autoloads
 using Autoloads
 #+end_src
 
-#+begin_example
-pkg> autoloads init
-#+end_example
-
-The ~autoloads~ environment is a workspace member of your global environment.
+The first ~pkg> autoloads add~ creates the ~autoloads~ environment (as
+~pkg> autoloads init~ does), a workspace member of your global environment.
 It is never left on the ~LOAD_PATH~.
 
 ** Adding packages
