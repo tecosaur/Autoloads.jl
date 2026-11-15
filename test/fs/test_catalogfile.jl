@@ -14,7 +14,7 @@ catalog_names(uuid, name, version, exported...) =
 @testset "catalog file" begin
     @testset "read and write" begin
         mktempdir() do dir
-            path = joinpath(dir, "sub", "catalog-v1")
+            path = joinpath(dir, "sub", "catalog")
             @test read_catalog(path) == []
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A, :f)
             @test write_catalog_changes!(path, CatalogRecord[a1])
@@ -45,7 +45,7 @@ catalog_names(uuid, name, version, exported...) =
 
     @testset "clear failures" begin
         mktempdir() do dir
-            path = joinpath(dir, "sub", "catalog-v1")
+            path = joinpath(dir, "sub", "catalog")
             a, b = Base.PkgId(CATALOG_UUID_A, "A"), Base.PkgId(CATALOG_UUID_B, "B")
             @test !clear_failures!(path, [a])
             @test !ispath(dirname(path))
@@ -64,7 +64,7 @@ catalog_names(uuid, name, version, exported...) =
     end
     @testset "rewrite round trip" begin
         mktempdir() do dir
-            path = joinpath(dir, "catalog-v1")
+            path = joinpath(dir, "catalog")
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), v"3.0.0", "boom")
             b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
@@ -82,7 +82,7 @@ catalog_names(uuid, name, version, exported...) =
 
     @testset "append after a torn last line" begin
         mktempdir() do dir
-            path = joinpath(dir, "catalog-v1")
+            path = joinpath(dir, "catalog")
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(good)
             write(path, line * "\n" * line[1:end-12])
@@ -95,7 +95,7 @@ catalog_names(uuid, name, version, exported...) =
 
     @testset "rejected record leaves the file untouched" begin
         mktempdir() do dir
-            path = joinpath(dir, "catalog-v1")
+            path = joinpath(dir, "catalog")
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             bad = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", Symbol("has space"))
             @test_throws ArgumentError write_catalog_changes!(path, CatalogRecord[good, bad])
@@ -110,7 +110,7 @@ catalog_names(uuid, name, version, exported...) =
 
     @testset "torn catalog" begin
         mktempdir() do dir
-            path = joinpath(dir, "catalog-v1")
+            path = joinpath(dir, "catalog")
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B, :h))
             write(path, catalog_line(good) * "\n" * line[1:end-12])
@@ -135,7 +135,7 @@ catalog_names(uuid, name, version, exported...) =
 
     @testset "concurrent writers" begin
         mktempdir() do dir
-            path = joinpath(dir, "catalog-v1")
+            path = joinpath(dir, "catalog")
             script = joinpath(dir, "writer.jl")
             src = joinpath(pkgdir(Autoloads), "src")
             write(script, """

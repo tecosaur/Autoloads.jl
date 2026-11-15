@@ -42,8 +42,14 @@ end
 
 @testset "member_dir and catalog_path" begin
     @test member_dir("/g") == joinpath("/g", "autoloads")
-    @test catalog_path() == joinpath(first(DEPOT_PATH), "autoloads",
-                                     "v$(VERSION.major).$(VERSION.minor)", "catalog-v1")
+    tail = joinpath("autoloads", "v$(VERSION.major).$(VERSION.minor)", "catalog")
+    withenv("XDG_STATE_HOME" => "/state") do
+        @test catalog_path() == joinpath("/state", tail)
+    end
+    withenv("XDG_STATE_HOME" => "relative/state") do
+        @test catalog_path() != joinpath("relative/state", tail) && endswith(catalog_path(), tail)
+        @test isabspath(catalog_path())
+    end
 end
 
 @testset "project_deps" begin

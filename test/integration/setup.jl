@@ -7,6 +7,9 @@
 
 using Autoloads: run_julia
 
+# Keeps the default catalog, here and in subprocesses, out of the user's state directory.
+ENV["XDG_STATE_HOME"] = mktempdir()
+
 const FIXTURES_DIR = joinpath(dirname(@__DIR__), "fixtures")
 const FIXTURE_A = Base.PkgId(Base.UUID("a0a0a0a0-1111-4111-8111-00000000000a"), "FixtureA")
 const FIXTURE_B = Base.PkgId(Base.UUID("b0b0b0b0-2222-4222-8222-00000000000b"), "FixtureB")

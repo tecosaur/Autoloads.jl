@@ -62,7 +62,7 @@ const FIXTURE_UUIDS = Dict(id.name => id.uuid for id in (FIXTURE_A, FIXTURE_B, F
 
 "A fresh catalog holding the stdlib records and `extra`."
 function seeded_catalog(extra::CatalogRecord...)
-    path = joinpath(mktempdir(), "catalog-v1")
+    path = joinpath(mktempdir(), "catalog")
     write_catalog_changes!(path, CatalogRecord[STDLIB_RECORDS; extra...])
     path
 end

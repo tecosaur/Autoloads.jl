@@ -48,7 +48,7 @@ failure_of(path, id) = only(filter(r -> r isa PkgFailure, records_of(path, id)))
 log_of(path) = isfile(path * ".log") ? read(path * ".log", String) : ""
 
 "Start indexing `ids` into a fresh catalog; returns the catalog path and a channel receiving `changed`."
-function start_run(ix, policy, ids; env = (), path = joinpath(mktempdir(), "catalog-v1"))
+function start_run(ix, policy, ids; env = (), path = joinpath(mktempdir(), "catalog"))
     done = Channel{Bool}(1)
     started = withenv("JULIA_DEPOT_PATH" => WS.depot_path, "JULIA_LOAD_PATH" => nothing, env...) do
         IndexerExt.start_indexing!(ix, policy, WS.member, path, wanted(ids), changed -> put!(done, changed))
@@ -132,7 +132,7 @@ end
     end
     @testset "on_exit may start the next run" begin
         start(ids, on_exit) = withenv("JULIA_DEPOT_PATH" => WS.depot_path, "JULIA_LOAD_PATH" => nothing) do
-            IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"), wanted(ids), on_exit)
+            IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog"), wanted(ids), on_exit)
         end
         results = Channel{Any}(2)
         @test start([FIXTURE_A], _ -> put!(results, start([FIXTURE_C], _ -> put!(results, :second_done))))
@@ -142,7 +142,7 @@ end
         restarted === true && @test next_result() === :second_done
     end
     @testset "nothing to index starts nothing" begin
-        @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog-v1"),
+        @test !IndexerExt.start_indexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog"),
                                           wanted(Base.PkgId[]), _ -> error("on_exit must not run"))
     end
     @testset "a recurring supervisor failure is logged once" begin
@@ -151,7 +151,7 @@ end
         logger = Test.TestLogger(min_level = Base.CoreLogging.Error)
         try
             Base.CoreLogging.with_logger(logger) do
-                foreach(_ -> finish_run(start_run(ix, Lazy, [FIXTURE_A]; path = joinpath(dir, "catalog-v1"))), 1:2)
+                foreach(_ -> finish_run(start_run(ix, Lazy, [FIXTURE_A]; path = joinpath(dir, "catalog"))), 1:2)
             end
         finally
             chmod(dir, 0o755)
@@ -159,7 +159,7 @@ end
         @test count(log -> startswith(log.message, "Supervising the indexer"), logger.logs) == 1
     end
     @testset "a held indexing lock stops the run" begin
-        path = joinpath(mktempdir(), "catalog-v1")
+        path = joinpath(mktempdir(), "catalog")
         lock = Base.invokelatest(PIDFILE.mkpidlock, path * ".indexing")
         try
             (; changed) = finish_run(start_run(ix, Lazy, [FIXTURE_A]; path))

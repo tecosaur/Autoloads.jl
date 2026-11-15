@@ -181,7 +181,7 @@ end
 
 @testset "add, remove, update and status" begin
     ws = build_workspace(; fixtures = (FIXTURE_C,))
-    catalog = joinpath(mktempdir(), "catalog-v1")
+    catalog = joinpath(mktempdir(), "catalog")
     global_dir = ws.global_env
     kws = (; global_dir, catalog)
     status_text() = sprint(io -> Autoloads.status(io; kws...))
