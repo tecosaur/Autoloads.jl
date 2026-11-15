@@ -8,7 +8,8 @@
 
 The loads tried this session: `attempted` holds `(id, name)` per
 [`load!`](@ref) call (`name` is `nothing` for whole-package loads), `failed`
-the packages that failed to load and are not retried.
+the packages that failed to load and are not retried until
+[`forget_failures!`](@ref).
 """
 struct LoadState
     attempted::Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}
@@ -61,7 +62,7 @@ the member manifest's version. `LOAD_PATH` is unchanged afterwards.
 Returns whether it loaded. A failure (including [`InconsistentVersions`](@ref)
 and an [`AutoloadFailure`](@ref) for a package that is not installed) is
 logged as one warning and recorded in `state.failed`; failed packages are
-not retried. Every call records `(req.id, req.name)` in `state.attempted`,
+not retried until [`forget_failures!`](@ref). Every call records `(req.id, req.name)` in `state.attempted`,
 except one interrupted by Ctrl-C: the `InterruptException` propagates and
 nothing is recorded, so the load can be retried.
 """
@@ -90,6 +91,19 @@ function load!(state::LoadState, req::LoadRequest, member::AbstractString)
     end
     push!(state.attempted, key)
     loaded
+end
+
+"""
+    forget_failures!(state)
+
+Forget the failed loads of `state`, so they are tried again: the remedies
+[`load!`](@ref) suggests change the environment.
+"""
+function forget_failures!(state::LoadState)
+    isempty(state.failed) && return
+    filter!(((id, _),) -> id ∉ state.failed, state.attempted)
+    empty!(state.failed)
+    nothing
 end
 
 """

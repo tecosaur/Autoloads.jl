@@ -57,6 +57,12 @@ if GROUP == "global"
             @test logged_load!(state, b) == (false, [])
             @test (FIXTURE_B, nothing) in state.attempted
         end
+        @testset "forgotten failures are retried" begin
+            delete!(ENV, "FIXTUREB_FAIL")
+            Ext.forget_failures!(state)
+            @test isempty(state.failed) && (FIXTURE_B, nothing) ∉ state.attempted
+            @test first(logged_load!(state, LoadRequest(FIXTURE_B, :fb, nothing)))
+        end
         @testset "not installed" begin
             loaded, logs = logged_load!(state, LoadRequest(FIXTURE_MISSING, :fm, nothing))
             @test !loaded && warned_once(logs, text -> endswith(text,

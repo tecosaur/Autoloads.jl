@@ -139,7 +139,8 @@ end
     repl_transform(ex) -> Any
 
 The REPL AST transform. When the session's environment files changed since
-the last input, requests a refresh. With a session and `Main` active, a
+the last input, requests a refresh and forgets failed loads (see
+[`forget_failures!`](@ref)). With a session and `Main` active, a
 statement that imports a member-only package is evaluated through
 [`eval_with_member`](@ref) and any other statement that could need an
 autoload is preceded by a [`prepare_statement`](@ref) call; other input is
@@ -314,6 +315,7 @@ function transform_input(runtime::Runtime, ex)
     stamp = env_stamp(runtime)
     if stamp != runtime.stamp
         runtime.stamp = stamp
+        forget_failures!(LOAD)
         put!(runtime.events, Refresh())
     end
     session = @atomic SESSION.session
