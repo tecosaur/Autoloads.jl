@@ -77,6 +77,8 @@ is_interrupt(err) =
 
 # ── Entry point ──
 
+# Julia 1.12.7 segfaults on SIGINT with this set (exit 0, signal 11), so an
+# interrupt there is recorded as a crash of the package in progress.
 Base.exit_on_sigint(false)
 try
     main(ARGS)

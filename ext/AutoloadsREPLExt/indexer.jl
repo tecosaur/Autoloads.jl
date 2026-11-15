@@ -93,7 +93,7 @@ end
 function launch_and_supervise(cmd::Base.AbstractCmd, project, path, wanted, timeout_s)
     output = Pipe()
     process = try
-        run(pipeline(cmd; stdout = output, stderr = output); wait = false)
+        run(pipeline(cmd; stdin = devnull, stdout = output, stderr = output); wait = false)
     catch err
         @error "Could not start the indexer for $project; its packages are retried on the next refresh" path exception =
             (err, catch_backtrace())
