@@ -5,7 +5,7 @@
 # the transform's change stamp live with the REPL backend task.
 
 const MISSING_FILE_STAMP = (0.0, Int64(0), UInt64(0))
-const STOP_WAIT_S = 1.0
+const STOP_WAIT_S = 2.0
 
 """
     Session(catalog, registry, config, member, member_deps)
