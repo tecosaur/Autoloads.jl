@@ -8,13 +8,16 @@
 
 const PKG_SUBPROCESS_ENV = ("JULIA_PKG_PRECOMPILE_AUTO" => "0",)
 const SCRIPTS_DIR = joinpath(@__DIR__, "scripts")
+# In a version's `state_dir`: one `resolve`, or `update [pkg ...]`, per line
+# (`scripts/spread.jl` appends `resolve` lines too).
+const DEFERRED_FILE = "deferred"
 
 """
     PkgOperationFailed(op, pkgs, env, exitcode)
 
-The Pkg subprocess of management command `op` (`:init`, `:add`, `:remove`
-or `:update`) on packages `pkgs`, in environment directory `env`, exited
-with `exitcode`. Its output, already printed, gives the reason.
+The Pkg subprocess of management command `op` (`:init`, `:add`, `:remove`,
+`:update` or `:resolve`) on packages `pkgs`, in environment directory `env`,
+exited with `exitcode`. Its output, already printed, gives the reason.
 """
 struct PkgOperationFailed <: Exception
     op::Symbol
@@ -79,25 +82,21 @@ function init(; carry_over::Union{Bool, Symbol} = :ask, global_dir::AbstractStri
         throw(ArgumentError("Autoloads.init: `carry_over` must be true, false or :ask, not $(repr(carry_over))"))
     previous = isfile(joinpath(member_dir(global_dir), "Project.toml")) ? nothing : previous_member(global_dir)
     is_carried = previous !== nothing && (carry_over === :ask ? ask_carry_over(previous) : carry_over)
-    source = is_carried ? previous.dir : ""
-    run_pkg_subprocess(:init, String[], `$(joinpath(SCRIPTS_DIR, "init.jl")) $global_dir $source`;
-                       project = global_dir)
-    autoloads_uuid = Base.PkgId(@__MODULE__).uuid
-    any(id -> id.uuid == autoloads_uuid, project_deps(joinpath(global_dir, "Project.toml"))) ||
-        @warn "The global environment ($global_dir) does not depend on Autoloads, so `using Autoloads` \
-               will not find it there; run `pkg> add Autoloads` with the global environment active"
-    notify_env_change()
+    create_environment(global_dir, is_carried ? previous.dir : "")
 end
 
 """
-    add(pkgs::Vector{String})
-    add(pkgs::AbstractString...)
+    add(pkgs::Vector{String}; all_versions = false)
+    add(pkgs::AbstractString...; all_versions = false)
 
 Add packages to the global autoloads environment, first creating it with
 [`init`](@ref) if it does not exist yet: paths of existing directories are
 developed, git URLs (`url#rev` for a revision) are added from their
 repository, and names from the registries. Recorded indexing failures of
-the packages are cleared, so they are indexed again.
+the packages are cleared, so they are indexed again. With `all_versions`,
+the packages are also added, with the same source and compat, to the
+autoloads environment of every other Julia version that has one, each
+resolving it when its Julia next starts a REPL session.
 The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Raises
@@ -109,7 +108,7 @@ The `global_dir` and `catalog` keywords are internal, for testing.
 Autoloads.add("Example")
 ```
 """
-function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir(),
+function add(pkgs::Vector{String}; all_versions::Bool = false, global_dir::AbstractString = global_env_dir(),
              catalog::AbstractString = catalog_path())
     isempty(pkgs) && throw(ArgumentError("Autoloads.add: no packages given"))
     member = member_dir(global_dir)
@@ -121,7 +120,9 @@ function add(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir()
     try
         run_pkg_operation(:add, pkgs, specs, member)
         names = [isdir(spec) ? package_name(spec) : spec for spec in specs]
-        clear_failures!(catalog, [id for id in project_deps(member_project) if id.name in names || id ∉ before])
+        added = [id for id in project_deps(member_project) if id.name in names || id ∉ before]
+        clear_failures!(catalog, added)
+        all_versions && spread!(:add, global_dir, [id.name for id in added])
     finally
         notify_env_change()
     end
@@ -130,10 +131,13 @@ end
 add(pkgs::AbstractString...; kwargs...) = add(collect(String, pkgs); kwargs...)
 
 """
-    remove(pkgs::Vector{String})
-    remove(pkgs::AbstractString...)
+    remove(pkgs::Vector{String}; all_versions = false)
+    remove(pkgs::AbstractString...; all_versions = false)
 
 Remove the packages named `pkgs` from the global autoloads environment.
+With `all_versions`, also remove them from the autoloads environment of
+every other Julia version, each resolving it when its Julia next starts a
+REPL session; packages this version lacks are then not an error.
 The `global_dir` keyword is internal, for testing.
 
 # Raises
@@ -146,22 +150,27 @@ The `global_dir` keyword is internal, for testing.
 Autoloads.remove("Example")
 ```
 """
-function remove(pkgs::Vector{String}; global_dir::AbstractString = global_env_dir())
+function remove(pkgs::Vector{String}; all_versions::Bool = false, global_dir::AbstractString = global_env_dir())
     isempty(pkgs) && throw(ArgumentError("Autoloads.remove: no packages given"))
-    run_pkg_operation(:remove, pkgs, pkgs, existing_member(global_dir))
+    member = existing_member(global_dir)
+    names = Set(id.name for id in project_deps(joinpath(member, "Project.toml")))
+    present = if all_versions filter(in(names), pkgs) else pkgs end
+    isempty(present) || run_pkg_operation(:remove, present, present, member)
+    all_versions && spread!(:remove, global_dir, pkgs)
     notify_env_change()
 end
 
 remove(pkgs::AbstractString...; kwargs...) = remove(collect(String, pkgs); kwargs...)
 
 """
-    update(pkgs::Vector{String} = String[])
-    update(pkgs::AbstractString...)
+    update(pkgs::Vector{String} = String[]; all_versions = false)
+    update(pkgs::AbstractString...; all_versions = false)
 
 Update the packages named `pkgs` of the global environment and its
 autoloads member, or all of their packages when `pkgs` is empty, in one
-resolve of the shared manifest. The `global_dir` keyword is internal, for
-testing.
+resolve of the shared manifest. With `all_versions`, every other Julia
+version with an autoloads environment does the same when it next starts a
+REPL session. The `global_dir` keyword is internal, for testing.
 
 # Raises
 - [`MemberMissing`](@ref) before [`init`](@ref) has run.
@@ -172,9 +181,15 @@ testing.
 Autoloads.update()
 ```
 """
-function update(pkgs::Vector{String} = String[]; global_dir::AbstractString = global_env_dir())
+function update(pkgs::Vector{String} = String[]; all_versions::Bool = false,
+                global_dir::AbstractString = global_env_dir())
     existing_member(global_dir)
     run_pkg_operation(:update, pkgs, pkgs, global_dir)
+    if all_versions
+        for member in version_members(global_dir)
+            member.dir == member_dir(global_dir) || defer!(member.version, "update", pkgs)
+        end
+    end
     notify_env_change()
 end
 
@@ -232,19 +247,100 @@ beside `global_dir`, with its dependencies: `(; minor, dir, names)`, or
 `nothing` when there is none with dependencies.
 """
 function previous_member(global_dir::AbstractString)
-    parent = dirname(global_dir)
-    prefix = "v$(VERSION.major)."
-    minors = Int[]
-    for name in (isdir(parent) ? readdir(parent) : String[])
-        minor = startswith(name, prefix) ? tryparse(Int, chopprefix(name, prefix)) : nothing
-        minor !== nothing && minor < VERSION.minor &&
-            isfile(joinpath(parent, name, "autoloads", "Project.toml")) && push!(minors, minor)
-    end
-    isempty(minors) && return nothing
-    minor = maximum(minors)
-    dir = joinpath(parent, prefix * string(minor), "autoloads")
+    older = filter(member -> member.version.major == VERSION.major && member.version.minor < VERSION.minor,
+                   version_members(global_dir))
+    isempty(older) && return nothing
+    (; version, dir) = argmax(member -> member.version, older)
     names = sort!([id.name for id in project_deps(joinpath(dir, "Project.toml"))])
-    isempty(names) ? nothing : (; minor, dir, names)
+    isempty(names) ? nothing : (; minor = Int(version.minor), dir, names)
+end
+
+"""
+The `(; version, dir)` of each autoloads member of the global environments
+of every Julia version beside `global_dir`, its own included.
+"""
+function version_members(global_dir::AbstractString)
+    parent = dirname(global_dir)
+    members = @NamedTuple{version::VersionNumber, dir::String}[]
+    for name in (isdir(parent) ? readdir(parent) : String[])
+        version = match(r"^v(\d+)\.(\d+)$", name)
+        dir = joinpath(parent, name, "autoloads")
+        version === nothing || !isfile(joinpath(dir, "Project.toml")) ||
+            push!(members, (; version = VersionNumber(parse(Int, version[1]), parse(Int, version[2])), dir))
+    end
+    members
+end
+
+"""
+Make `op` (`:add` or `:remove`) of packages `names` in the autoloads members
+of the other Julia versions beside `global_dir` (by `scripts/spread.jl`),
+deferring a resolve to each version whose member it changes.
+"""
+function spread!(op::Symbol, global_dir::AbstractString, names::Vector{String})
+    source = member_dir(global_dir)
+    targets = [(member.dir, joinpath(state_dir(member.version), DEFERRED_FILE))
+               for member in version_members(global_dir) if member.dir != source]
+    isempty(targets) && return
+    run_pkg_subprocess(op, names, `$(joinpath(SCRIPTS_DIR, "spread.jl")) $op $source $(join(names, ',')) \
+                                   $(collect(Iterators.flatten(targets)))`; project = source)
+end
+
+"Defer `op` (`resolve`, or `update` of `pkgs`, all when empty) on Julia `version`'s autoloads environment."
+function defer!(version::VersionNumber, op::AbstractString, pkgs::Vector{String} = String[])
+    path = joinpath(state_dir(version), DEFERRED_FILE)
+    mkpath(dirname(path))
+    open(io -> println(io, join([op; pkgs], ' ')), path, "a")
+end
+
+"""
+    apply_deferred!(global_dir; output = stdout) -> Bool
+
+Apply the changes other Julia versions deferred to this one's autoloads
+environment in `global_dir` (see [`defer!`](@ref)) in one resolve, or one
+update if any asked for one; whether there were any. Pkg prints to `output`.
+
+Raises [`PkgOperationFailed`](@ref), leaving the deferred changes in place.
+"""
+function apply_deferred!(global_dir::AbstractString; output::IO = stdout)
+    path = joinpath(state_dir(), DEFERRED_FILE)
+    isfile(path) || return false
+    content = read(path, String)
+    requests = split.(split(content, '\n'; keepempty = false))
+    updates = [String.(request[2:end]) for request in requests if first(request) == "update"]
+    if isempty(updates)
+        run_pkg_operation(:resolve, String[], String[], global_dir; output)
+    else
+        pkgs = if any(isempty, updates) String[] else unique!(reduce(vcat, updates)) end
+        run_pkg_operation(:update, pkgs, pkgs, global_dir; output)
+    end
+    read(path, String) == content && rm(path)
+    notify_env_change()
+    true
+end
+
+"""
+    adopt_previous!(global_dir; output = stdout) -> Union{NamedTuple, Nothing}
+
+Create this Julia version's autoloads environment in `global_dir` from the
+newest older version's, carrying its packages and settings over without
+asking: that version's [`previous_member`](@ref), or `nothing` (and nothing
+done) if there is none. Pkg prints to `output`.
+"""
+function adopt_previous!(global_dir::AbstractString; output::IO = stdout)
+    previous = previous_member(global_dir)
+    previous === nothing || create_environment(global_dir, previous.dir; output)
+    previous
+end
+
+"Run `scripts/init.jl` in `global_dir`, carrying over the member `source` (`\"\"` for none)."
+function create_environment(global_dir::AbstractString, source::AbstractString; output::IO = stdout)
+    run_pkg_subprocess(:init, String[], `$(joinpath(SCRIPTS_DIR, "init.jl")) $global_dir $source`;
+                       project = global_dir, output)
+    autoloads_uuid = Base.PkgId(@__MODULE__).uuid
+    any(id -> id.uuid == autoloads_uuid, project_deps(joinpath(global_dir, "Project.toml"))) ||
+        @warn "The global environment ($global_dir) does not depend on Autoloads, so `using Autoloads` \
+               will not find it there; run `pkg> add Autoloads` with the global environment active"
+    notify_env_change()
 end
 
 "Whether to carry over `previous`: the user's answer, or (non-interactive) `false` after saying how."
@@ -268,11 +364,11 @@ function existing_member(global_dir::AbstractString)
 end
 
 "Run `scripts/pkg.jl` for `op` with `args` in environment `project`."
-run_pkg_operation(op::Symbol, pkgs::Vector{String}, args::Vector{String}, project::AbstractString) =
-    run_pkg_subprocess(op, pkgs, `$(joinpath(SCRIPTS_DIR, "pkg.jl")) $op $args`; project)
+run_pkg_operation(op::Symbol, pkgs::Vector{String}, args::Vector{String}, project::AbstractString; output::IO = stdout) =
+    run_pkg_subprocess(op, pkgs, `$(joinpath(SCRIPTS_DIR, "pkg.jl")) $op $args`; project, output)
 
-function run_pkg_subprocess(op::Symbol, pkgs::Vector{String}, args::Cmd; project::AbstractString)
-    process = run_julia(args; project, env = PKG_SUBPROCESS_ENV)
+function run_pkg_subprocess(op::Symbol, pkgs::Vector{String}, args::Cmd; project::AbstractString, output::IO = stdout)
+    process = run_julia(args; project, env = PKG_SUBPROCESS_ENV, output)
     wait(process)
     @debug "Autoloads Pkg subprocess exited" op pkgs project process.exitcode
     success(process) || throw(PkgOperationFailed(op, pkgs, String(project), process.exitcode))

@@ -23,7 +23,9 @@ using Autoloads
 
 The first ~pkg> autoloads add~ creates the ~autoloads~ environment (as
 ~pkg> autoloads init~ does), a workspace member of your global environment.
-It is never left on the ~LOAD_PATH~.
+It is never left on the ~LOAD_PATH~. On a new Julia version, the first REPL
+session sets it up in the background from the previous version's, packages
+and settings included.
 
 ** Adding packages
 
@@ -49,9 +51,9 @@ The full set of commands is:
 
 #+begin_example
 pkg> autoloads init
-pkg> autoloads add pkg ...
-pkg> autoloads rm pkg ...
-pkg> autoloads up [pkg ...]
+pkg> autoloads add [-g] pkg ...
+pkg> autoloads rm [-g] pkg ...
+pkg> autoloads up [-g] [pkg ...]
 pkg> autoloads status
 #+end_example
 
@@ -61,6 +63,9 @@ When ~autoloads init~ carries packages over from an older Julia version,
 developed and git-sourced ones keep their source. ~autoloads up~ updates
 the autoload packages together with the global environment's own; a plain
 ~pkg> up~ in the global environment does not update the autoload packages.
+With ~-g~ (~--global~), a change is also made to every other Julia version
+that has an autoloads environment, each resolving it in the background when
+it next starts a REPL session.
 
 ** Settings
 

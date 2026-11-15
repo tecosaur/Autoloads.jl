@@ -18,9 +18,8 @@
 const TOML = Base.require(Base.PkgId(Base.UUID("fa267f1f-6049-4f14-aa54-33bafae1ed76"), "TOML"))
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
 const MEMBER = "autoloads"
-# Pkg's top-level key order, so rewritten files read as Pkg writes them.
-const KEY_ORDER = ["name", "uuid", "keywords", "license", "desc", "version", "readonly", "workspace",
-                   "deps", "weakdeps", "sources", "extensions", "compat"]
+
+include("projectfiles.jl")
 
 function main(global_dir, carry_over_dir)
     mkpath(global_dir)
@@ -109,37 +108,6 @@ function carried_deps(project_file)
                                 for (name, uuid) in deps if haskey(declared, name) || haskey(recorded, uuid))
     compat = filter(((name, _),) -> name == "julia" || haskey(deps, name), get(project, "compat", Dict{String, Any}()))
     filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => deps, "compat" => compat, "sources" => sources))
-end
-
-"The `[sources]` entry for each developed or git-sourced package of `project_file`'s manifest, by UUID."
-function manifest_sources(project_file)
-    manifest = Base.project_file_manifest_path(project_file)
-    sources = Dict{String, Dict{String, Any}}()
-    manifest === nothing && return sources
-    for infos in values(get(TOML.parsefile(manifest), "deps", Dict{String, Any}())), info in infos
-        source = if haskey(info, "path")
-            Dict{String, Any}("path" => normpath(joinpath(dirname(manifest), info["path"])))
-        elseif haskey(info, "repo-url")
-            Dict{String, Any}(key => info["repo-" * key] for key in ("url", "rev", "subdir") if haskey(info, "repo-" * key))
-        end
-        source === nothing || (sources[info["uuid"]] = source)
-    end
-    sources
-end
-
-key_rank(key) = (something(findfirst(==(key), KEY_ORDER), length(KEY_ORDER) + 1), key)
-
-write_toml(path, dict) = write_atomically(path, sprint(io -> TOML.print(io, dict; sorted = true, by = key_rank)))
-
-function write_atomically(path, content)
-    tmp = path * ".tmp-$(getpid())"
-    try
-        write(tmp, content)
-        mv(tmp, path; force = true)
-    catch
-        rm(tmp; force = true)
-        rethrow()
-    end
 end
 
 try

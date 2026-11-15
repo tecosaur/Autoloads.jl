@@ -21,6 +21,8 @@ const REPLMode = isdefined(Pkg, :REPLMode) ? Pkg.REPLMode : nothing
 # recompiles this extension), so building costs no load time; a failure is
 # kept as its message for `register_commands!` to report.
 # `init` and `status` take no arguments, so are called splatted: as `init()`.
+# Other Julia versions' changes are resolved when each next starts a session.
+const GLOBAL_OPTION = [Pair{Symbol, Any}[:name => "global", :short_name => "g", :api => :all_versions => true]]
 const COMMANDS = try
     REPLMode === nothing && error("this Pkg has no REPLMode")
     let command = (; help, kwargs...) -> REPLMode.CommandSpec(; help = REPLMode.Markdown.parse(help), kwargs...)
@@ -35,30 +37,33 @@ const COMMANDS = try
                 the newest older Julia version's global environment can be carried over.
                 """),
         command(name = "add", api = Autoloads.add, should_splat = false, arg_count = 1 => Inf,
-                completions = :complete_add_dev, description = "add packages to autoload",
+                option_spec = GLOBAL_OPTION, completions = :complete_add_dev, description = "add packages to autoload",
                 help = """
-                    autoloads add pkg ...
+                    autoloads add [-g|--global] pkg ...
 
-                Add packages to the global autoloads environment, by name or (for an existing
-                directory) by path, which is developed. The environment is created first
-                (as by `autoloads init`) if it does not exist yet.
+                Add packages to the global autoloads environment, by name, git URL (`url#rev` for a
+                revision), or (for an existing directory) by path, which is developed. The
+                environment is created first (as by `autoloads init`) if it does not exist yet.
+                With `-g`, also add them to every other Julia version's autoloads environment.
                 """),
         command(name = "remove", short_name = "rm", api = Autoloads.remove, should_splat = false,
-                arg_count = 1 => Inf, completions = :complete_installed_packages,
+                arg_count = 1 => Inf, option_spec = GLOBAL_OPTION, completions = :complete_installed_packages,
                 description = "remove packages from the autoloads",
                 help = """
-                    autoloads [rm|remove] pkg ...
+                    autoloads [rm|remove] [-g|--global] pkg ...
 
-                Remove packages from the global autoloads environment.
+                Remove packages from the global autoloads environment. With `-g`, also remove them
+                from every other Julia version's autoloads environment.
                 """),
         command(name = "update", short_name = "up", api = Autoloads.update, should_splat = false,
-                arg_count = 0 => Inf, completions = :complete_installed_packages,
+                arg_count = 0 => Inf, option_spec = GLOBAL_OPTION, completions = :complete_installed_packages,
                 description = "update the global and autoload packages",
                 help = """
-                    autoloads [up|update] [pkg ...]
+                    autoloads [up|update] [-g|--global] [pkg ...]
 
                 Update the given packages, or every package of the global environment and its
-                autoloads, in one resolve.
+                autoloads, in one resolve. With `-g`, every other Julia version's autoloads
+                environment is updated too.
                 """),
         command(name = "status", short_name = "st", api = Autoloads.status, arg_count = 0 => 0,
                 description = "show what autoloads",

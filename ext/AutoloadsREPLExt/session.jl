@@ -76,8 +76,9 @@ Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractSt
 
 The worker's own state: the built-in records and stdlib ids (computed once),
 the configuration, observation and refresh errors logged since each last
-succeeded (see [`is_unreported!`](@ref)), and the unknown `packages.<Name>`
-settings last warned about.
+succeeded (see [`is_unreported!`](@ref)), the unknown `packages.<Name>`
+settings last warned about, and the environment upkeep done (see
+[`maintain_environment!`](@ref)).
 """
 struct Worker
     runtime::Runtime
@@ -88,11 +89,13 @@ struct Worker
     reported_observation_errors::Set{String}
     reported_refresh_errors::Set{String}
     reported_unknown_packages::Set{String}
+    has_tried_setup::Base.RefValue{Bool}
+    deferred_stamp::Base.RefValue{FileStamp}
 end
 
 Worker(runtime::Runtime, indexer::Indexer) =
     Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}(), Set{String}(),
-           Set{String}())
+           Set{String}(), Ref(false), Ref(MISSING_FILE_STAMP))
 
 "`Base.package_callbacks` entry: only enqueues an [`Observed`](@ref) event."
 struct ObserveLoad
@@ -265,6 +268,7 @@ settings are invalid, or when there is neither a member nor a selected
 project dependency.
 """
 function refresh!(worker::Worker)
+    maintain_environment!(worker)
     session, plan = derive_session(worker)
     @atomic SESSION.session = session
     session === nothing && return
@@ -293,6 +297,41 @@ function derive_session(worker::Worker)
                 wanted_versions(member_env.graph, [member_env.deps; worker.stdlibs])]
     active === nothing || push!(plan, dirname(active) => wanted_versions(project_env.graph, selected))
     session, plan
+end
+
+"""
+Keep this version's autoloads environment set up without user action: the
+first time a session finds none, create it from the newest older Julia
+version's (see `Autoloads.adopt_previous!`), and apply the changes other
+versions deferred to it whenever they change (`Autoloads.apply_deferred!`).
+Pkg's output is shown only when it fails; a failure is not retried until the
+deferred changes change, or the next session.
+"""
+function maintain_environment!(worker::Worker)
+    global_dir = dirname(worker.runtime.member)
+    function quietly(f, purpose)
+        output = IOBuffer()
+        try
+            f(output)
+        catch err
+            err isa InterruptException && rethrow()
+            @error "Autoloads could not $purpose" output = String(take!(output)) exception = (err, catch_backtrace())
+            nothing
+        end
+    end
+    if !worker.has_tried_setup[] && !isfile(joinpath(worker.runtime.member, "Project.toml"))
+        worker.has_tried_setup[] = true
+        previous = quietly(output -> Autoloads.adopt_previous!(global_dir; output),
+                           "set up the autoloads environment from an older Julia version's")
+        previous === nothing ||
+            @info "Autoloads set up its environment for Julia $(VERSION.major).$(VERSION.minor), carrying over \
+                   $(join(previous.names, ", ")) and the settings from Julia $(VERSION.major).$(previous.minor)"
+    end
+    stamp = file_stamp(joinpath(state_dir(), Autoloads.DEFERRED_FILE))
+    stamp == worker.deferred_stamp[] && return
+    worker.deferred_stamp[] = stamp
+    stamp == MISSING_FILE_STAMP ||
+        quietly(output -> Autoloads.apply_deferred!(global_dir; output), "apply the changes made from other Julia versions")
 end
 
 """

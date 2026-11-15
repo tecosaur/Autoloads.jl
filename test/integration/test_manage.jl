@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestManage
 
-using Test, Autoloads
+using Test, REPL, Autoloads
 using Autoloads: PkgNames, PkgFailure, PkgOperationFailed, MemberMissing, read_catalog,
     write_catalog_changes!, project_deps
 
@@ -319,6 +319,97 @@ end
         end
     finally
         Autoloads.ENV_CHANGED[] = nothing
+    end
+end
+
+@testset "all Julia versions" begin
+    ws = build_workspace(; fixtures = (FIXTURE_C,))
+    kws = (; global_dir = ws.global_env, catalog = joinpath(mktempdir(), "catalog"))
+    next_version = VersionNumber(VERSION.major, VERSION.minor + 1)
+    sibling_member(ws.global_env, "v$(next_version.major).$(next_version.minor)",
+                   "[deps]\nFixtureC = \"$(FIXTURE_C.uuid)\"\n")
+    sibling = joinpath(dirname(ws.global_env), "v$(next_version.major).$(next_version.minor)", "autoloads")
+    deferred(version) = (path = joinpath(Autoloads.state_dir(version), Autoloads.DEFERRED_FILE);
+                         isfile(path) ? readlines(path) : String[])
+    fixture_a = joinpath(FIXTURES_DIR, "FixtureA")
+    try
+        @testset "add and remove edit the other versions now, and defer their resolve" begin
+            captured(() -> Autoloads.add([fixture_a]; all_versions = true, kws...), ws.depot_path)
+            sibling_project = Base.parsed_toml(joinpath(sibling, "Project.toml"))
+            @test member_names(sibling) == ["FixtureA", "FixtureC"]
+            @test sibling_project["sources"]["FixtureA"] == Dict("path" => fixture_a)
+            @test deferred(next_version) == ["resolve"]
+            captured(() -> Autoloads.add([fixture_a]; all_versions = true, kws...), ws.depot_path)
+            @test deferred(next_version) == ["resolve"]  # unchanged, so nothing more to resolve
+            captured(() -> Autoloads.remove(["FixtureA"]; all_versions = true, kws.global_dir), ws.depot_path)
+            @test member_names(ws.member) == member_names(sibling) == ["FixtureC"]
+            @test !haskey(Base.parsed_toml(joinpath(sibling, "Project.toml")), "sources")
+            @test deferred(next_version) == ["resolve", "resolve"]
+            @testset "a package only another version has" begin
+                sibling_member(ws.global_env, "v$(next_version.major).$(next_version.minor)",
+                               "[deps]\nFixtureB = \"$(FIXTURE_B.uuid)\"\n")
+                captured(() -> Autoloads.remove("FixtureB"; all_versions = true, kws.global_dir), ws.depot_path)
+                @test isempty(member_names(sibling)) && member_names(ws.member) == ["FixtureC"]
+            end
+        end
+        @testset "update defers an update" begin
+            captured(() -> Autoloads.update(["FixtureC"]; all_versions = true, kws.global_dir), ws.depot_path)
+            @test last(deferred(next_version)) == "update FixtureC"
+        end
+        @testset "deferred changes apply once" begin
+            Autoloads.defer!(VERSION, "resolve")
+            Autoloads.defer!(VERSION, "update", ["FixtureC"])
+            output = IOBuffer()
+            @test withenv(() -> Autoloads.apply_deferred!(ws.global_env; output), "JULIA_DEPOT_PATH" => ws.depot_path,
+                          "JULIA_PKG_OFFLINE" => "true")
+            @test isempty(deferred(VERSION))
+            @test !Autoloads.apply_deferred!(ws.global_env; output)
+        end
+    finally
+        rm(Autoloads.state_dir(next_version); recursive = true, force = true)
+    end
+end
+
+@testset "adopting an older version's environment" begin
+    env = fresh_global_env("""
+        [deps]
+        Autoloads = "$AUTOLOADS_UUID"
+
+        [sources]
+        Autoloads = {path = "$(escape_string(AUTOLOADS_DIR))"}
+        """)
+    output = IOBuffer()
+    @test Autoloads.adopt_previous!(env.global_dir; output) === nothing
+    @test !ispath(joinpath(env.global_dir, "autoloads"))
+    sibling_member(env.global_dir, PREVIOUS_ENV_NAME, "[deps]\nDates = \"$(stdlib_uuid("Dates"))\"\n")
+    previous = withenv(() -> Autoloads.adopt_previous!(env.global_dir; output), "JULIA_DEPOT_PATH" => env.depot_path,
+                       "JULIA_PKG_OFFLINE" => "true")
+    @test previous.names == ["Dates"]
+    @test member_names(joinpath(env.global_dir, "autoloads")) == ["Dates"]
+    @test occursin("Created", String(take!(output)))
+    @testset "by the session worker, once, then applying deferred changes" begin
+        env = fresh_global_env("""
+            [deps]
+            Autoloads = "$AUTOLOADS_UUID"
+
+            [sources]
+            Autoloads = {path = "$(escape_string(AUTOLOADS_DIR))"}
+            """)
+        sibling_member(env.global_dir, PREVIOUS_ENV_NAME, "[deps]\nDates = \"$(stdlib_uuid("Dates"))\"\n")
+        Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
+        member = joinpath(env.global_dir, "autoloads")
+        worker = Ext.Worker(Ext.Runtime(Channel{Ext.Event}(Inf), member, joinpath(mktempdir(), "catalog")), Ext.Indexer())
+        upkeep() = withenv(() -> Test.collect_test_logs(() -> Ext.maintain_environment!(worker)) |> first,
+                           "JULIA_DEPOT_PATH" => env.depot_path, "JULIA_PKG_OFFLINE" => "true")
+        @test contains(only(upkeep()).message, "carrying over Dates")
+        @test member_names(member) == ["Dates"]
+        rm(member; recursive = true)
+        @test isempty(upkeep()) && !ispath(member)
+        mkpath(member)
+        write(joinpath(member, "Project.toml"), "")
+        Autoloads.defer!(VERSION, "resolve")
+        @test isempty(upkeep())
+        @test !isfile(joinpath(Autoloads.state_dir(), Autoloads.DEFERRED_FILE))
     end
 end
 

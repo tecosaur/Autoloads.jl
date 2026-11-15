@@ -4,7 +4,7 @@
 # Pkg operations on the global autoloads environment, run by `Autoloads.add`,
 # `remove` and `update` as
 #
-#     julia --project=<env> pkg.jl <add|remove|update> <package>...
+#     julia --project=<env> pkg.jl <add|remove|update|resolve> <package>...
 #
 # `add` develops the paths of existing directories and adds the rest from
 # their git URL (`url#rev` for a revision) or by name; `update` updates every package of the workspace when given none. A
@@ -29,8 +29,10 @@ function main(op, pkgs)
         Pkg.rm(pkgs)
     elseif op == "update"
         isempty(pkgs) ? Pkg.update(; workspace = true) : Pkg.update(pkgs; workspace = true)
+    elseif op == "resolve"
+        Pkg.resolve()
     else
-        error("pkg.jl: unknown operation `$op`; expected add, remove or update")
+        error("pkg.jl: unknown operation `$op`; expected add, remove, update or resolve")
     end
 end
 
