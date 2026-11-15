@@ -58,7 +58,8 @@ or `:ask` to prompt in interactive sessions (otherwise, print how to add
 them). Developed and git-sourced packages are not carried over; their names
 are printed so they can be re-added by path.
 
-Warns if the global environment does not depend on Autoloads.
+Warns if the global environment does not depend on Autoloads. The
+`global_dir` keyword is internal, for testing.
 
 # Raises
 - `ArgumentError` for any other `carry_over`.
@@ -90,6 +91,7 @@ end
 Add packages to the global autoloads environment: names are added from the
 registries, and paths of existing directories are developed. Recorded
 indexing failures of the packages are cleared, so they are indexed again.
+The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Raises
 - `ArgumentError` when `pkgs` is empty.
@@ -120,6 +122,7 @@ end
     remove(pkgs::Vector{String})
 
 Remove the packages named `pkgs` from the global autoloads environment.
+The `global_dir` keyword is internal, for testing.
 
 # Raises
 - `ArgumentError` when `pkgs` is empty.
@@ -142,7 +145,8 @@ end
 
 Update the packages named `pkgs` of the global environment and its
 autoloads member, or all of their packages when `pkgs` is empty, in one
-resolve of the shared manifest.
+resolve of the shared manifest. The `global_dir` keyword is internal, for
+testing.
 
 # Raises
 - [`MemberMissing`](@ref) before [`init`](@ref) has run.
@@ -167,6 +171,7 @@ project, each with its version and whether it is `indexed (n names)` (`n`
 names to autoload), `not indexed`, or `failed: <reason>`; then the names
 that more than one package claims, the precompile policy and the global
 autoloads environment's path. Reads the environments and the catalog afresh.
+The `global_dir` and `catalog` keywords are internal, for testing.
 
 # Raises
 [`ConfigError`](@ref) when the Autoloads preferences are invalid.
