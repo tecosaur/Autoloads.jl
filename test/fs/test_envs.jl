@@ -39,7 +39,8 @@ end
 
 @testset "member_dir and catalog_path" begin
     @test member_dir("/g") == joinpath("/g", "autoloads")
-    @test dirname(catalog_path()) == member_dir()
+    @test catalog_path() == joinpath(first(DEPOT_PATH), "autoloads",
+                                     "v$(VERSION.major).$(VERSION.minor)", "catalog-v1")
 end
 
 @testset "project_deps" begin
@@ -68,6 +69,35 @@ end
     end
 end
 
+@testset "manifest_graph edge cases" begin
+    mktempdir() do root
+        project = write_file(joinpath(root, "Project.toml"), "")
+        write_file(joinpath(root, "Manifest.toml"), """
+            manifest_format = "2.0"
+            [[deps.X]]
+            uuid = "$UUID_X"
+            version = "1.0.0"
+            """)
+        versioned = "Manifest-v$(VERSION.major).$(VERSION.minor).toml"
+        write_file(joinpath(root, versioned), """
+            manifest_format = "2.0"
+            [[deps.X]]
+            uuid = "$UUID_X"
+            version = "2.0.0"
+            deps = ["Ghost"]
+            [[deps.Y]]
+            uuid = "$UUID_Y"
+            version = "0.1.0"
+            [deps.Y.deps]
+            X = "$UUID_X"
+            """)
+        g = manifest_graph(project)
+        @test g.versions[UUID_X] == v"2.0.0"
+        @test g.deps[UUID_Y] == [UUID_X]
+        @test g.deps[UUID_X] == Base.UUID[]
+    end
+end
+
 @testset "stdlib_ids and builtin_records" begin
     ids = stdlib_ids()
     @test Base.PkgId(UUID_DATES, "Dates") in ids
@@ -77,7 +107,7 @@ end
 
 @testset "run_julia" begin
     out = IOBuffer()
-    wait(run_julia(`-e 'print(VERSION)'`; output = out))
+    wait(run_julia(`-e 'print(VERSION)'`; project = nothing, output = out))
     @test String(take!(out)) == string(VERSION)
     mktempdir() do dir
         write_file(joinpath(dir, "Project.toml"), "")

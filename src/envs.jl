@@ -25,8 +25,9 @@ The `autoloads` workspace member of the global environment in `global_dir`.
 member_dir(global_dir = dirname(Base.load_path_expand("@v#.#"))) =
     joinpath(global_dir, "autoloads")
 
-"The file holding the package catalog, inside [`member_dir`](@ref)."
-catalog_path() = joinpath(member_dir(), "catalog.txt")
+"The package catalog file for this Julia version, in the first depot."
+catalog_path() = joinpath(first(DEPOT_PATH), "autoloads",
+                          "v$(VERSION.major).$(VERSION.minor)", "catalog-v1")
 
 """
     project_deps(project_file) -> Vector{Base.PkgId}
@@ -62,7 +63,9 @@ function manifest_graph(project_file::AbstractString)
 end
 
 # `deps` is a list of names, or a name => UUID table when names are ambiguous.
-dependency_uuids(names::AbstractVector, uuid_of) = [uuid_of[name] for name in names]
+# Names absent from the manifest are skipped, as Base does when resolving them.
+dependency_uuids(names::AbstractVector, uuid_of) =
+    [uuid_of[name] for name in names if haskey(uuid_of, name)]
 dependency_uuids(table::AbstractDict, _) = [Base.UUID(uuid) for uuid in values(table)]
 
 """
@@ -106,10 +109,11 @@ builtin_records() =
     run_julia(args::Cmd; project, env = (), nice = false, detach = false, output = stdout) -> Base.Process
 
 Start a Julia subprocess running `args`, with the current session's flags and
-no startup or history file. `env` is a collection of `name => value` pairs;
+no startup or history file. `project` is the `--project` to use, or
+`nothing` for the default. `env` is a collection of `name => value` pairs;
 `nice` lowers its priority where `nice` is available. Does not wait for it.
 """
-function run_julia(args::Cmd; project = nothing, env = (), nice::Bool = false,
+function run_julia(args::Cmd; project, env = (), nice::Bool = false,
                    detach::Bool = false, output = stdout)
     cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no`
     project === nothing || (cmd = `$cmd --project=$project`)
