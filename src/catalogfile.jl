@@ -69,12 +69,16 @@ end
 group_by_id(records) = foldl((groups, r) -> (push!(get!(groups, r.id, CatalogRecord[]), r); groups),
                              records; init = Dict{Base.PkgId, Vector{CatalogRecord}}())
 
+# Lines are serialised first so a rejected record leaves the file untouched.
 # One `write` per line so O_APPEND keeps each line contiguous.
 function append_catalog(path, records)
+    lines = [catalog_line(r) * "\n" for r in records]
     flags = Base.Filesystem.JL_O_WRONLY | Base.Filesystem.JL_O_APPEND | Base.Filesystem.JL_O_CREAT
     file = Base.Filesystem.open(path, flags, 0o644)
     try
-        foreach(r -> write(file, catalog_line(r) * "\n"), records)
+        is_torn = filesize(path) > 0 && open(io -> (seekend(io); skip(io, -1); read(io, UInt8)), path) != UInt8('\n')
+        is_torn && write(file, "\n")
+        foreach(line -> write(file, line), lines)
     finally
         close(file)
     end
@@ -84,6 +88,11 @@ end
 function rewrite_catalog(path, groups)
     lines = sort!([catalog_line(r) for records in values(groups) for r in records])
     tmp = path * ".tmp-$(getpid())"
-    write(tmp, join(lines, '\n') * '\n')
-    mv(tmp, path; force = true)
+    try
+        write(tmp, join(lines, '\n') * '\n')
+        mv(tmp, path; force = true)
+    catch
+        rm(tmp; force = true)
+        rethrow()
+    end
 end

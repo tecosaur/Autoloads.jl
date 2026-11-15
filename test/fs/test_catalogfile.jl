@@ -1,5 +1,5 @@
 using Test
-using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!
+using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog
 
 const CATALOG_UUID_A = Base.UUID("00000000-0000-0000-0000-0000000000b1")
 const CATALOG_UUID_B = Base.UUID("00000000-0000-0000-0000-0000000000b2")
@@ -36,6 +36,52 @@ catalog_names(uuid, name, version, exported...) =
             @test write_catalog_changes!(path, CatalogRecord[a3])
             @test count(r -> r.id.uuid == CATALOG_UUID_A, read_catalog(path)) == 2
             @test !isfile(path * ".tmp-$(getpid())")
+        end
+    end
+
+    @testset "rewrite round trip" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog-v1")
+            a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), v"3.0.0", "boom")
+            b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
+            @test write_catalog_changes!(path, CatalogRecord[a1, fail, b1])
+            @test write_catalog_changes!(path, CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"2.0.0", :A)])
+            records = read_catalog(path)
+            @test any(r -> r isa PkgNames && length(r.versions) > 1, records)
+            catalog = build_catalog(records)
+            @test Set(catalog.records[Base.PkgId(CATALOG_UUID_A, "A")]) ==
+                Set(CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A) |>
+                    r -> PkgNames(r.id, [v"1.0.0", v"2.0.0"], r.exported, r.public, r.reexported), fail])
+            @test catalog.records[Base.PkgId(CATALOG_UUID_B, "B")] == CatalogRecord[b1]
+        end
+    end
+
+    @testset "append after a torn last line" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog-v1")
+            good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            line = catalog_line(good)
+            write(path, line * "\n" * line[1:end-12])
+            b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
+            @test (@test_logs (:warn, r"1 malformed") write_catalog_changes!(path, CatalogRecord[b1]))
+            records = @test_logs (:warn, r"1 malformed") read_catalog(path)
+            @test b1 in records
+        end
+    end
+
+    @testset "rejected record leaves the file untouched" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog-v1")
+            good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            bad = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", Symbol("has space"))
+            @test_throws ArgumentError write_catalog_changes!(path, CatalogRecord[good, bad])
+            @test !isfile(path) || filesize(path) == 0
+            write_catalog_changes!(path, CatalogRecord[good])
+            before = read(path)
+            @test_throws ArgumentError write_catalog_changes!(path, CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"1.5.0", :A, Symbol("x y"))])
+            @test read(path) == before
+            @test isempty(filter(contains(".tmp-"), readdir(dir)))
         end
     end
 

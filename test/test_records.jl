@@ -56,6 +56,14 @@ end
         merged = merge_observation(CatalogRecord[names_record(["1.0.0", "2.0.0"], [:f])], failure_record("2.0.0"))
         @test merged == CatalogRecord[a1, failure_record("2.0.0")]
     end
+    @testset "multi-version observation folds per version" begin
+        multi = names_record(["1.0.0", "2.0.0"], [:g])
+        merged = merge_observation(CatalogRecord[a1, failure_record("2.0.0")], multi)
+        @test merged == foldl(merge_observation, [names_record(["1.0.0"], [:g]), names_record(["2.0.0"], [:g])];
+                              init = CatalogRecord[a1, failure_record("2.0.0")])
+        @test merged == CatalogRecord[names_record(["1.0.0", "2.0.0"], [:g])]
+        @test merge_observation(CatalogRecord[], multi) == CatalogRecord[multi]
+    end
     @testset "repeated observation is unchanged" begin
         existing = CatalogRecord[a1, failure_record("2.0.0")]
         @test merge_observation(existing, a1) == existing

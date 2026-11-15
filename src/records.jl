@@ -78,31 +78,22 @@ end
 """
     merge_observation(existing, new) -> Vector{CatalogRecord}
 
-Return the records for one package after observing `new`, a single-version
-[`PkgNames`](@ref) or a [`PkgFailure`](@ref). The result is `existing` itself
+Return the records for one package after observing `new`, a [`PkgNames`](@ref)
+or a [`PkgFailure`](@ref). A multi-version `PkgNames` is observed one version
+at a time, in order. The result is `existing` itself
 when a record already says the same about that version. Otherwise the version
 leaves whichever record held it (records left empty, and failures at that
 version, are dropped) and joins a record with an identical namespace, or
 `new` is appended.
 """
-function merge_observation(existing::Vector{CatalogRecord}, new::CatalogRecord)
-    version = observed_version(new)
-    any(r -> holds_version(r, version) && same_claim(r, new), existing) && return existing
-    merged = CatalogRecord[]
-    for record in existing
-        stripped = without_version(record, version)
-        stripped === nothing || push!(merged, stripped)
+function merge_observation(existing::Vector{CatalogRecord}, new::PkgNames)
+    length(new.versions) > 1 || return merge_single(existing, new)
+    foldl(new.versions; init = existing) do records, version
+        merge_single(records, PkgNames(new.id, [version], new.exported, new.public, new.reexported))
     end
-    twin = new isa PkgNames ? findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) : nothing
-    if twin === nothing
-        push!(merged, new)
-    else
-        record = merged[twin]
-        merged[twin] = PkgNames(record.id, sort!(vcat(record.versions, new.versions)),
-                                record.exported, record.public, record.reexported)
-    end
-    merged
 end
+
+merge_observation(existing::Vector{CatalogRecord}, new::PkgFailure) = merge_single(existing, new)
 
 """
     catalog_line(record) -> String
@@ -149,6 +140,25 @@ function parse_catalog_line(line::AbstractString)
 end
 
 # ── Helpers ──
+
+function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
+    version = observed_version(new)
+    any(r -> holds_version(r, version) && same_claim(r, new), existing) && return existing
+    merged = CatalogRecord[]
+    for record in existing
+        stripped = without_version(record, version)
+        stripped === nothing || push!(merged, stripped)
+    end
+    twin = new isa PkgNames ? findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) : nothing
+    if twin === nothing
+        push!(merged, new)
+    else
+        record = merged[twin]
+        merged[twin] = PkgNames(record.id, sort!(vcat(record.versions, new.versions)),
+                                record.exported, record.public, record.reexported)
+    end
+    merged
+end
 
 same_namespace(a::PkgNames, b::PkgNames) =
     a.exported == b.exported && a.public == b.public && a.reexported == b.reexported
