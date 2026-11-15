@@ -2,8 +2,9 @@
 The `pkg> autoloads` command group: `init`, `add`, `rm|remove`, `up|update`
 and `st|status`, each calling the Autoloads function of the same name; and
 the wrapping of the environment-changing `pkg>` commands so they request an
-autoload refresh. The wrapping edits Pkg's private `REPLMode.SPECS`, so it is
-confined to [`wrap_pkg_commands!`](@ref) and skipped with a warning if Pkg's
+autoload refresh. Both use Pkg's private `REPLMode`, so they are confined to
+[`COMMANDS`](@ref), [`register_commands!`](@ref) and
+[`wrap_pkg_commands!`](@ref), and each is skipped with a warning if Pkg's
 layout is not as expected.
 """
 module AutoloadsPkgExt
@@ -14,8 +15,11 @@ const REPLMode = Pkg.REPLMode
 
 command(; help, kwargs...) = REPLMode.CommandSpec(; help = REPLMode.Markdown.parse(help), kwargs...)
 
+# Built when precompiling, against the Pkg it is loaded with (a different Pkg
+# recompiles this extension), so building costs no load time; a failure is
+# kept as its message for `register_commands!` to report.
 # `init` and `status` take no arguments, so are called splatted: as `init()`.
-const COMMANDS = [
+const COMMANDS = try [
     command(name = "init", api = Autoloads.init, arg_count = 0 => 0,
             description = "set up the global autoloads environment",
             help = """
@@ -59,7 +63,9 @@ const COMMANDS = [
             state, the names more than one of them provides, the precompile policy, and the
             global autoloads environment's path.
             """),
-]
+] catch err
+    sprint(showerror, err)
+end
 
 # `pkg>` commands after which the active environments may provide different names.
 const ENV_CHANGING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "resolve", "instantiate"]
@@ -112,14 +118,32 @@ function find_package_specs()
 end
 
 function __init__()
-    specs = Dict{String, REPLMode.CommandSpec}()
-    for spec in COMMANDS
-        specs[spec.canonical_name] = spec
-        spec.short_name === nothing || (specs[spec.short_name] = spec)
-    end
-    REPLMode.SPECS["autoloads"] = specs
+    register_commands!()
     wrap_pkg_commands!()
-    copy!(REPLMode.help.content, REPLMode.gen_help().content)
+end
+
+"""
+    register_commands!()
+
+Add the `pkg> autoloads` command group of [`COMMANDS`](@ref) to Pkg's
+`REPLMode.SPECS` and regenerate the `pkg>` help. Warns instead of throwing
+if Pkg's layout is not as expected.
+"""
+function register_commands!()
+    try
+        COMMANDS isa String && error(COMMANDS)
+        specs = Dict{String, REPLMode.CommandSpec}()
+        for spec in COMMANDS
+            specs[spec.canonical_name] = spec
+            spec.short_name === nothing || (specs[spec.short_name] = spec)
+        end
+        REPLMode.SPECS["autoloads"] = specs
+        copy!(REPLMode.help.content, REPLMode.gen_help().content)
+    catch err
+        @warn "Autoloads cannot add the `pkg> autoloads` commands to this Pkg's REPL; call `Autoloads.add` and \
+               the other management functions instead" pkg_version = Pkg.pkgversion(Pkg) exception = err
+    end
+    nothing
 end
 
 end
