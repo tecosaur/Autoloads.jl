@@ -21,8 +21,7 @@ using Autoloads: Catalog, Config, ConfigError, ManifestGraph, build_catalog, bui
     pending_loads, to_index, owner, names_at, read_catalog, read_healed_catalog,
     extract_names, stdlib_ids, builtin_records, member_dir, catalog_path, state_dir, load_config, parse_config
 
-# From `atreplinit`, by when the first prompt is up.
-const WORKER_START_DELAY_S = 0.05
+const WORKER_START_POLL_S = 0.05
 const WORKER_START_FALLBACK_S = 5
 const IS_COMPILATION_SERIALISED = VERSION < v"1.14-"
 
@@ -93,10 +92,16 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
             member = joinpath(dir, "autoloads")
             mkpath(member)
             write(joinpath(member, "Project.toml"), "[deps]\nWorkload = \"$(id.uuid)\"\n")
+            write_catalog_changes!(joinpath(dir, "catalog"), [records; PkgFailure(id, v"0.9.0", "failed")])
+            parse_config(Dict{String, Any}("project" => ["Workload"], "packages" => Dict{String, Any}(
+                "Workload" => Dict{String, Any}("skip" => ["wl"], "only" => ["wp"], "bindings" => "used"))))
             worker = Worker(Runtime(Channel{Event}(Inf), member, joinpath(dir, "catalog")), Indexer())
-            derive_session(worker)
-            maintain_environment!(worker)
-            observe!(worker, [Base.PkgId(Autoloads)])
+            # The user's settings are read, and may not suit this member.
+            Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                derive_session(worker)
+                maintain_environment!(worker)
+                observe!(worker, [Base.PkgId(Autoloads)])
+            end
         end
     end
     let start = WorkerStart(Runtime(Channel{Event}(Inf), "", ""))

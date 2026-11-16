@@ -72,6 +72,7 @@ keys take their defaults: `stdlib = true`, `project = true`,
 Throws [`ConfigError`](@ref) for unknown keys or values of the wrong shape.
 """
 function parse_config(prefs::AbstractDict)
+    prefs = as_table(prefs)
     check_keys(prefs, TOP_LEVEL_KEYS, String[])
     Config(
         parse_bool(prefs, "stdlib", true),
@@ -119,20 +120,25 @@ function autoload_names(record::PkgNames, config::PackageConfig)
     push!(names, Symbol(last(split(record.id.name, '.'))))
 end
 
-function check_keys(dict::AbstractDict, valid::Vector{String}, keypath::Vector{String})
+# Settings are untyped: tables are narrowed to TOML's own type, and values taken
+# unspecialised, so that calls resolve statically and their code is cached.
+as_table(@nospecialize(table::AbstractDict)) =
+    table isa Dict{String, Any} ? table : Dict{String, Any}(string(key) => value for (key, value) in table)
+
+function check_keys(dict::Dict{String, Any}, valid::Vector{String}, keypath::Vector{String})
     for key in keys(dict)
         key in valid || throw(ConfigError([keypath; string(key)],
             "one of " * join(map(k -> "`$k`", valid), ", "), key))
     end
 end
 
-function parse_bool(dict, key, default)
+function parse_bool(dict::Dict{String, Any}, key::String, default::Bool)
     value = get(dict, key, default)
     value isa Bool || throw(ConfigError([key], "true or false", value))
     value
 end
 
-function parse_choice(dict, key, choices, default; keypath = String[])
+function parse_choice(dict::Dict{String, Any}, key::String, choices::Dict, default; keypath::Vector{String} = String[])
     haskey(dict, key) || return default
     value = dict[key]
     (value isa AbstractString && haskey(choices, value)) ||
@@ -140,10 +146,14 @@ function parse_choice(dict, key, choices, default; keypath = String[])
     choices[value]
 end
 
-function parse_names(value, keypath)
-    value isa AbstractVector && all(x -> x isa AbstractString, value) ||
-        throw(ConfigError(keypath, "a list of names", value))
-    String.(value)
+function parse_names(@nospecialize(value), keypath::Vector{String})
+    is_valid = value isa AbstractVector
+    names = String[]
+    for name in (is_valid ? value : ())
+        name isa AbstractString ? push!(names, name) : (is_valid = false)
+    end
+    is_valid || throw(ConfigError(keypath, "a list of names", value))
+    names
 end
 
 function parse_project(@nospecialize(value))
@@ -155,17 +165,18 @@ end
 function parse_packages(@nospecialize(value))
     value isa AbstractDict || throw(ConfigError(["packages"], "a table of package settings", value))
     packages = Dict{String, PackageConfig}()
-    for (name, settings) in value
-        packages[String(name)] = parse_package(settings, ["packages", String(name)])
+    for (name, settings) in as_table(value)
+        packages[name] = parse_package(settings, ["packages", name])
     end
     packages
 end
 
-function parse_package(settings, keypath)
+function parse_package(@nospecialize(settings), keypath::Vector{String})
     settings isa AbstractDict || throw(ConfigError(keypath, "a table with keys `skip`, `only`, `bindings`", settings))
-    check_keys(settings, PACKAGE_KEYS, keypath)
-    skip = haskey(settings, "skip") ? parse_names(settings["skip"], [keypath; "skip"]) : String[]
-    only = haskey(settings, "only") ? Set(Symbol.(parse_names(settings["only"], [keypath; "only"]))) : nothing
-    bindings = parse_choice(settings, "bindings", BINDINGS_NAMES, nothing; keypath)
-    PackageConfig(Set(Symbol.(skip)), only, bindings)
+    table = as_table(settings)
+    check_keys(table, PACKAGE_KEYS, keypath)
+    names(key) = Set{Symbol}(map(Symbol, parse_names(table[key], [keypath; key])))
+    skip = if haskey(table, "skip") names("skip") else Set{Symbol}() end
+    only = if haskey(table, "only") names("only") else nothing end
+    PackageConfig(skip, only, parse_choice(table, "bindings", BINDINGS_NAMES, nothing; keypath))
 end

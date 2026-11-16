@@ -74,17 +74,29 @@ Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractSt
     Runtime(events, String(member), String(catalog_path), Base.Event(), nothing, false, false, false)
 
 """
-    WorkerStart(runtime)
+    WorkerStart(runtime, repl = nothing)
 
-Starts `runtime`'s deferred worker: from a `Timer`, at once; from
-`atreplinit`, at the first prompt.
+Starts `runtime`'s deferred worker: from a `Timer`, once `repl` (if any) is
+at its first prompt; from `atreplinit`, by polling for that prompt, which
+comes after every other `atreplinit` hook has run.
 """
 struct WorkerStart <: Function
     runtime::Runtime
+    repl::Union{REPL.LineEditREPL, Nothing}
 end
 
-(start::WorkerStart)(::Timer) = notify(start.runtime.worker_start)
-(start::WorkerStart)(::REPL.AbstractREPL) = Timer(start, WORKER_START_DELAY_S)
+WorkerStart(runtime::Runtime) = WorkerStart(runtime, nothing)
+
+function (start::WorkerStart)(timer::Timer)
+    (; repl) = start
+    repl === nothing || !hasfield(REPL.LineEditREPL, :mistate) || repl.mistate !== nothing || return
+    close(timer)
+    notify(start.runtime.worker_start)
+end
+
+(start::WorkerStart)(repl::REPL.AbstractREPL) =
+    Timer(WorkerStart(start.runtime, repl isa REPL.LineEditREPL ? repl : nothing), WORKER_START_POLL_S;
+          interval = WORKER_START_POLL_S)
 
 """
     Worker(runtime, indexer)
@@ -312,7 +324,8 @@ function derive_session(worker::Worker)
     autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
                             worker.stdlibs, [record.id for record in worker.builtins], cfg)
     warn_unknown_packages!(worker.reported_unknown_packages, cfg, autoload)
-    catalog = build_catalog([worker.builtins; read_healed_catalog(worker.runtime.catalog_path)])
+    catalog = build_catalog(append!(convert(Vector{CatalogRecord}, worker.builtins),
+                                    read_healed_catalog(worker.runtime.catalog_path)))
     session = Session(catalog, build_registry(catalog, autoload, cfg), cfg, member,
                       Set(id.name for id in member_env.deps))
     # Stdlibs are always indexed, for hints. Without a member, a session implies an active project.
