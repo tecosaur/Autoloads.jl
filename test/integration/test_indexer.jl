@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestIndexer
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 using Autoloads: PkgNames, PkgFailure, read_catalog, manifest_graph, Lazy, Background
 
 include("setup.jl")

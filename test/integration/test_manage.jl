@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestManage
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 using Autoloads: PkgNames, PkgFailure, PkgOperationFailed, MemberMissing, read_catalog,
     write_catalog_changes!, project_deps
 

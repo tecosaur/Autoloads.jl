@@ -3,7 +3,7 @@
 
 module TestUnknownPackages
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 using Autoloads: parse_config
 
 const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)

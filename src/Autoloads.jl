@@ -21,5 +21,6 @@ include("config.jl")
 include("envs.jl")
 include("registry.jl")
 include("manage.jl")
+include("integration.jl")
 
 end

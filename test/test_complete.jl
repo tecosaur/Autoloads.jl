@@ -3,7 +3,7 @@
 
 module TestComplete
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 using REPL.LineEdit: LineEdit, NamedCompletion
 
 const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)

@@ -155,12 +155,7 @@ function start_session!(; member::AbstractString = member_dir(), catalog::Abstra
     push!(Base.package_callbacks, ObserveLoad(events))
     Autoloads.ENV_CHANGED[] = () -> put!(events, Refresh())
     worker_start = runtime.worker_start
-    # `invokelatest` keeps the worker's code out of the cache, where compiling it costs no stall.
-    @static if IS_COMPILATION_SERIALISED
-        errormonitor(Threads.@spawn (wait(worker_start); run_worker(Worker(runtime, Indexer()))))
-    else
-        errormonitor(Threads.@spawn (wait(worker_start); Base.invokelatest(run_worker, Worker(runtime, Indexer()))))
-    end
+    errormonitor(Threads.@spawn (wait(worker_start); run_worker(Worker(runtime, Indexer()))))
     atexit(() -> stop_worker!(runtime))
     put!(events, Refresh())
     is_deferred || notify(worker_start)

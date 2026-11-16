@@ -120,7 +120,7 @@ function launch_and_supervise(cmd::Base.AbstractCmd, project, path, wanted, time
 end
 
 function supervise(process::Base.Process, pid::Integer, output::Pipe, path, wanted, timeout_s)
-    by_uuid = Dict(id.uuid => (id => version) for (id, version) in wanted)
+    by_uuid = Dict{Base.UUID, eltype(wanted)}(first(entry).uuid => entry for entry in wanted)
     timed_out = Threads.Atomic{Bool}(false)
     timer = Ref{Union{Timer, Nothing}}(nothing)
     disarm!() = (timer[] === nothing || close(timer[]); timer[] = nothing)

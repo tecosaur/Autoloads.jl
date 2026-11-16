@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestLoad
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 
 include("setup.jl")
 

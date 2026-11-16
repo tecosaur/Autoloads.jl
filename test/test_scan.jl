@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-using Test, Random, REPL, Autoloads
+using Test, Random, REPL, Future, Autoloads
 using Autoloads: PkgNames, build_catalog, build_registry, parse_config
 
 const Scan = Base.get_extension(Autoloads, :AutoloadsREPLExt)

@@ -3,7 +3,7 @@
 
 module TestHints
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 
 const Hints = Base.get_extension(Autoloads, :AutoloadsREPLExt)
 pkg(name, n) = Base.PkgId(Base.UUID(UInt128(n)), name)

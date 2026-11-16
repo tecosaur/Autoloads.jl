@@ -13,7 +13,7 @@ const GROUP, TEST_PROJECT, MEMBER = ARGS
 const DEFAULT_LOAD_PATH = copy(LOAD_PATH)
 # Autoloads comes from its test project, which must not stay on LOAD_PATH.
 push!(LOAD_PATH, TEST_PROJECT)
-using Autoloads, REPL
+using Autoloads, REPL, Future
 include("setup.jl")
 copy!(LOAD_PATH, DEFAULT_LOAD_PATH)
 const LoadRequest = Autoloads.LoadRequest

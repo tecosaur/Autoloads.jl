@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestSession
 
-using Test, REPL, Autoloads
+using Test, REPL, Future, Autoloads
 using Autoloads: PkgNames, CatalogRecord, stdlib_ids, write_catalog_changes!, run_julia
 
 include("setup.jl")

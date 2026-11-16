@@ -7,7 +7,7 @@ using Test
 
 # Anything compiling on the REPL's thread adds input latency.
 const SCRIPT = """
-    using Autoloads, REPL
+    using Autoloads, REPL, Future
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
     Ext.RUNTIME[] = Ext.Runtime(Channel{Ext.Event}(Inf), "", "")
     println(stderr, "START")
