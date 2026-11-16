@@ -120,10 +120,10 @@ function autoload_names(record::PkgNames, config::PackageConfig)
     push!(names, Symbol(last(split(record.id.name, '.'))))
 end
 
-# Settings are untyped: tables are narrowed to TOML's own type, and values taken
-# unspecialised, so that calls resolve statically and their code is cached.
+# Settings are narrowed to TOML's own types, and otherwise taken unspecialised,
+# so that parsing them resolves statically and its code is cached.
 as_table(@nospecialize(table::AbstractDict)) =
-    table isa Dict{String, Any} ? table : Dict{String, Any}(string(key) => value for (key, value) in table)
+    if table isa Dict{String, Any} table else Dict{String, Any}(string(k) => v for (k, v) in table) end
 
 function check_keys(dict::Dict{String, Any}, valid::Vector{String}, keypath::Vector{String})
     for key in keys(dict)
@@ -147,13 +147,10 @@ function parse_choice(dict::Dict{String, Any}, key::String, choices::Dict, defau
 end
 
 function parse_names(@nospecialize(value), keypath::Vector{String})
-    is_valid = value isa AbstractVector
-    names = String[]
-    for name in (is_valid ? value : ())
-        name isa AbstractString ? push!(names, name) : (is_valid = false)
-    end
-    is_valid || throw(ConfigError(keypath, "a list of names", value))
-    names
+    value isa Vector{String} && return value
+    value isa AbstractVector && all(name -> name isa AbstractString, value) ||
+        throw(ConfigError(keypath, "a list of names", value))
+    String[name for name in value]
 end
 
 function parse_project(@nospecialize(value))

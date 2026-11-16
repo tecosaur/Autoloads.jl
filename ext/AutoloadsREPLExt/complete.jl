@@ -63,7 +63,7 @@ function completion_context(full::String, region::Pair{Int, Int})
     Base.incomplete_tag(Base.parse_input_line(before; depwarn = false)) in (:string, :char, :cmd, :comment) &&
         return nothing
     is_name_prefix = Base.isidentifier(chopprefix(prefix, "@"))
-    endswith(before, '.') || return is_name_prefix ? (prefix, nothing) : nothing
+    endswith(before, '.') || return if is_name_prefix; (prefix, nothing) end
     (is_name_prefix || isempty(prefix)) || return nothing
     # The qualifier must be a root name, not itself a field (`A.P.`).
     head = chop(before)
@@ -73,7 +73,7 @@ function completion_context(full::String, region::Pair{Int, Int})
     end
     qualifier = head[start:end]
     is_root = start == 1 || head[prevind(head, start)] != '.'
-    Base.isidentifier(qualifier) && is_root ? (prefix, Symbol(qualifier)) : nothing
+    if Base.isidentifier(qualifier) && is_root; (prefix, Symbol(qualifier)) end
 end
 
 """
@@ -83,7 +83,7 @@ Wrap the Julian prompt's completion provider in a [`CompletionWrapper`](@ref):
 now if a line-editing REPL is running, else from an `atreplinit` callback.
 """
 function install_completion()
-    repl = isdefined(Base, :active_repl) ? Base.active_repl : nothing
+    repl = if isdefined(Base, :active_repl) Base.active_repl end
     if repl isa REPL.LineEditREPL && isdefined(repl, :interface)
         wrap_completion!(repl)
     else

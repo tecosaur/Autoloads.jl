@@ -80,9 +80,9 @@ Autoloads.init(carry_over = false)
 function init(; carry_over::Union{Bool, Symbol} = :ask, global_dir::AbstractString = global_env_dir())
     carry_over isa Bool || carry_over === :ask ||
         throw(ArgumentError("Autoloads.init: `carry_over` must be true, false or :ask, not $(repr(carry_over))"))
-    previous = isfile(joinpath(member_dir(global_dir), "Project.toml")) ? nothing : previous_member(global_dir)
-    is_carried = previous !== nothing && (carry_over === :ask ? ask_carry_over(previous) : carry_over)
-    create_environment(global_dir, is_carried ? previous.dir : "")
+    previous = if !isfile(joinpath(member_dir(global_dir), "Project.toml")) previous_member(global_dir) end
+    is_carried = previous !== nothing && if carry_over === :ask ask_carry_over(previous) else carry_over end
+    create_environment(global_dir, if is_carried previous.dir else "" end)
 end
 
 """
@@ -112,14 +112,14 @@ function add(pkgs::Vector{String}; all_versions::Bool = false, global_dir::Abstr
              catalog::AbstractString = catalog_path())
     isempty(pkgs) && throw(ArgumentError("Autoloads.add: no packages given"))
     member = member_dir(global_dir)
-    isfile(joinpath(member, "Project.toml")) || init(; global_dir)
-    specs = [isdir(expanduser(pkg)) ? abspath(expanduser(pkg)) : pkg for pkg in pkgs]
     member_project = joinpath(member, "Project.toml")
+    isfile(member_project) || init(; global_dir)
+    specs = [if isdir(expanduser(pkg)) abspath(expanduser(pkg)) else pkg end for pkg in pkgs]
     before = Set(project_deps(member_project))
     # A failed `Pkg.add` may follow a successful `Pkg.develop`, so notify regardless.
     try
         run_pkg_operation(:add, pkgs, specs, member)
-        names = [isdir(spec) ? package_name(spec) : spec for spec in specs]
+        names = [if isdir(spec) package_name(spec) else spec end for spec in specs]
         added = [id for id in project_deps(member_project) if id.name in names || id ∉ before]
         clear_failures!(catalog, added)
         all_versions && spread!(:add, global_dir, [id.name for id in added])
@@ -227,16 +227,16 @@ function status(io::IO = stdout; global_dir::AbstractString = global_env_dir(),
     autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
                             stdlib_ids(), [record.id for record in builtins], cfg)
     print_autoloads(io, "Global autoloads:", member_env.graph, member_env.deps, cat, cfg)
-    print_autoloads(io, active === nothing ? "Project autoloads:" : "Project autoloads ($active):",
+    print_autoloads(io, if active === nothing "Project autoloads:" else "Project autoloads ($active):" end,
                     project_env.graph, selected, cat, cfg)
     ambiguous = sort!(collect(ambiguities(build_registry(cat, autoload, cfg))); by = first)
-    println(io, "Ambiguous names:", isempty(ambiguous) ? " none" : "")
+    println(io, "Ambiguous names:", if isempty(ambiguous) " none" else "" end)
     for (name, ids) in ambiguous
         println(io, "  ", name, ": ", join(sort!([id.name for id in ids]), ", "))
     end
     println(io, "Precompile policy: ", lowercase(string(cfg.policy)))
     println(io, "Autoloads environment: ", member,
-            isfile(member_project) ? "" : " (missing; create it with `pkg> autoloads init`)")
+            if isfile(member_project) "" else " (missing; create it with `pkg> autoloads init`)" end)
 end
 
 # ── Helpers ──
@@ -252,7 +252,7 @@ function previous_member(global_dir::AbstractString)
     isempty(older) && return nothing
     (; version, dir) = argmax(member -> member.version, older)
     names = sort!([id.name for id in project_deps(joinpath(dir, "Project.toml"))])
-    isempty(names) ? nothing : (; minor = Int(version.minor), dir, names)
+    if !isempty(names); (; minor = Int(version.minor), dir, names) end
 end
 
 """
@@ -262,7 +262,8 @@ of every Julia version beside `global_dir`, its own included.
 function version_members(global_dir::AbstractString)
     parent = dirname(global_dir)
     members = @NamedTuple{version::VersionNumber, dir::String}[]
-    for name in (isdir(parent) ? readdir(parent) : String[])
+    isdir(parent) || return members
+    for name in readdir(parent)
         version = match(r"^v(\d+)\.(\d+)$", name)
         dir = joinpath(parent, name, "autoloads")
         version === nothing || !isfile(joinpath(dir, "Project.toml")) ||
@@ -346,14 +347,14 @@ end
 "Whether to carry over `previous`: the user's answer, or (non-interactive) `false` after saying how."
 function ask_carry_over(previous)
     count = length(previous.names)
-    packages = count == 1 ? "package" : "packages"
+    packages, them = if count == 1; ("package", "it") else ("packages", "them") end
     julia = "Julia $(VERSION.major).$(previous.minor)"
     if isinteractive()
         print(stdout, "Carry over $count autoload $packages, and the Autoloads settings, from $julia? [Y/n] ")
         return lowercase(strip(readline(stdin))) in ("", "y", "yes")
     end
     println(stdout, "$julia has $count autoload $packages ($(join(previous.names, ", "))); to carry ",
-            count == 1 ? "it" : "them", " over, run `pkg> autoloads add $(join(previous.names, ' '))`")
+            them, " over, run `pkg> autoloads add $(join(previous.names, ' '))`")
     false
 end
 
@@ -377,7 +378,7 @@ end
 
 function package_name(dir::AbstractString)
     project = joinpath(dir, "Project.toml")
-    isfile(project) ? get(Base.parsed_toml(project), "name", nothing) : nothing
+    if isfile(project) get(Base.parsed_toml(project), "name", nothing) end
 end
 
 function print_autoloads(io::IO, title, graph::ManifestGraph, ids, cat::Catalog, cfg::Config)
@@ -385,7 +386,7 @@ function print_autoloads(io::IO, title, graph::ManifestGraph, ids, cat::Catalog,
     isempty(ids) && return println(io, "  (none)")
     entries = map(sort(ids; by = id -> id.name)) do id
         version = get(graph.versions, id.uuid, nothing)
-        (version === nothing ? id.name : "$(id.name) v$version", index_state(cat, cfg, id, version))
+        (if version === nothing id.name else "$(id.name) v$version" end, index_state(cat, cfg, id, version))
     end
     width = maximum(textwidth ∘ first, entries)
     for (label, state) in entries
@@ -397,5 +398,5 @@ function index_state(cat::Catalog, cfg::Config, id::Base.PkgId, version)
     record = names_at(cat, id, version)
     record === nothing || return "indexed ($(length(autoload_names(record, package_config(cfg, id.name)))) names)"
     failure = failed_at(cat, id, version)
-    failure === nothing ? "not indexed" : "failed: " * first(split(failure.message, '\n'))
+    if failure === nothing "not indexed" else "failed: " * first(split(failure.message, '\n')) end
 end

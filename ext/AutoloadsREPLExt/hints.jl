@@ -34,7 +34,7 @@ function availability(id::Base.PkgId, deps::Set{Base.UUID}, manifest::Set{Base.U
     id.uuid in manifest && return InProjectManifest, nothing
     env = loadpath_env(id)
     env === nothing || return OnLoadPath, env
-    (id.uuid in member_deps ? AutoloadPackage : Elsewhere), nothing
+    if id.uuid in member_deps AutoloadPackage else Elsewhere end, nothing
 end
 
 """
@@ -93,10 +93,9 @@ function reexport_sources(providers, graph::ManifestGraph)
     sources = Dict{Base.PkgId, Vector{String}}()
     for (id, owns) in providers
         owns && continue
-        closure = haskey(graph.versions, id.uuid) ? dependency_closure(graph, id.uuid) : Set{Base.UUID}()
+        closure = dependency_closure(graph, id.uuid)
         used = filter(owner -> owner.uuid in closure, owners)
-        cited = isempty(used) ? owners : used
-        sources[id] = [owner.name for owner in cited]
+        sources[id] = [owner.name for owner in if isempty(used) owners else used end]
     end
     sources
 end
@@ -113,19 +112,22 @@ function undefvar_hint(io::IO, ex::UndefVarError)
     try
         is_provided_by_loaded_module(ex.var) && return
         session = @atomic SESSION.session
-        catalog = session === nothing ? read_hint_catalog() : session.catalog
+        # Without a session the catalog is read on demand: a few ms, only when an error is shown.
+        catalog, member = if session === nothing
+            build_catalog(vcat(builtin_records(), read_catalog(catalog_path()))), member_dir()
+        else
+            session.catalog, session.member
+        end
         providers = Autoloads.providers(catalog, ex.var)
         isempty(providers) && return
         (; deps, graph) = environment(Base.active_project())
         deps_uuids = Set{Base.UUID}(id.uuid for id in deps)
         manifest = Set{Base.UUID}(keys(graph.versions))
-        member_project = joinpath(session === nothing ? member_dir() : session.member, "Project.toml")
+        member_project = joinpath(member, "Project.toml")
         member_deps = Set{Base.UUID}(id.uuid for id in project_deps(member_project))
         avail(id) = availability(id, deps_uuids, manifest, member_deps, loadpath_env)
-        ranked = rank_providers(providers, avail)
-        sources = reexport_sources(providers, graph)
-        has_member = isfile(member_project)
-        print(io, format_hint(ex.var, ranked, sources, has_member))
+        print(io, format_hint(ex.var, rank_providers(providers, avail), reexport_sources(providers, graph),
+                              isfile(member_project)))
     catch err
         err isa InterruptException && rethrow()
         @debug "Autoloads could not build the UndefVarError hint" exception = (err, catch_backtrace())
@@ -140,9 +142,6 @@ function is_provided_by_loaded_module(var::Symbol)
     end
 end
 
-# Without a session the catalog is read on demand: a few ms, only when an error is shown.
-read_hint_catalog() = build_catalog(vcat(builtin_records(), read_catalog(catalog_path())))
-
 "The load-path environment that resolves `id`, as Pkg names it (`@v1.13`, `@stdlib`, else the path), or `nothing`."
 function loadpath_env(id::Base.PkgId)
     # Never block an error display behind a `require` in another task.
@@ -155,8 +154,9 @@ function loadpath_env(id::Base.PkgId)
     (found === nothing || found[1] != id) && return nothing
     env = found[2]
     env == Sys.STDLIB && return "@stdlib"
-    dir = isdir(env) ? env : dirname(env)
+    dir = if isdir(env) env else dirname(env) end
     parent = dirname(dir)
     depots = [rstrip(normpath(depot), '/') for depot in DEPOT_PATH]
-    basename(parent) == "environments" && rstrip(normpath(dirname(parent)), '/') in depots ? "@" * basename(dir) : env
+    is_depot_env = basename(parent) == "environments" && rstrip(normpath(dirname(parent)), '/') in depots
+    if is_depot_env "@" * basename(dir) else env end
 end

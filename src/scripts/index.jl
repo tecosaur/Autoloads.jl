@@ -40,7 +40,7 @@ end
 
 function parse_entry(entry::AbstractString)
     uuid, name, version = split(entry, '='; limit = 3)
-    Base.PkgId(Base.UUID(uuid), String(name)) => (version == "-" ? nothing : VersionNumber(version))
+    Base.PkgId(Base.UUID(uuid), String(name)) => if version != "-" VersionNumber(version) end
 end
 
 report(line) = (println(stdout, line); flush(stdout))
@@ -65,7 +65,7 @@ function index_package(path, id::Base.PkgId, version::Union{VersionNumber, Nothi
     report("indexing $(id.uuid)")
     record = try
         names = Base.invokelatest(extract_names, Base.require(id), id)
-        version === nothing ? names : PkgNames(id, [version], names.exported, names.public, names.reexported)
+        if version === nothing names else PkgNames(id, [version], names.exported, names.public, names.reexported) end
     catch err
         is_interrupt(err) && rethrow()
         @error "Failed to load $(id.name) for indexing" exception = (err, catch_backtrace())

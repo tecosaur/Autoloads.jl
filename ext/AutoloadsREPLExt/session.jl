@@ -77,8 +77,8 @@ Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractSt
     WorkerStart(runtime, repl = nothing)
 
 Starts `runtime`'s deferred worker: from a `Timer`, once `repl` (if any) is
-at its first prompt; from `atreplinit`, by polling for that prompt, which
-comes after every other `atreplinit` hook has run.
+at its first prompt; from `atreplinit`, by polling a line-editing REPL for
+that prompt, which comes after every other `atreplinit` hook has run.
 """
 struct WorkerStart <: Function
     runtime::Runtime
@@ -94,9 +94,9 @@ function (start::WorkerStart)(timer::Timer)
     notify(start.runtime.worker_start)
 end
 
-(start::WorkerStart)(repl::REPL.AbstractREPL) =
-    Timer(WorkerStart(start.runtime, repl isa REPL.LineEditREPL ? repl : nothing), WORKER_START_POLL_S;
-          interval = WORKER_START_POLL_S)
+(start::WorkerStart)(repl::REPL.LineEditREPL) =
+    Timer(WorkerStart(start.runtime, repl), WORKER_START_POLL_S; interval = WORKER_START_POLL_S)
+(start::WorkerStart)(::REPL.AbstractREPL) = notify(start.runtime.worker_start)
 
 """
     Worker(runtime, indexer)
@@ -329,7 +329,7 @@ function derive_session(worker::Worker)
     session = Session(catalog, build_registry(catalog, autoload, cfg), cfg, member,
                       Set(id.name for id in member_env.deps))
     # Stdlibs are always indexed, for hints. Without a member, a session implies an active project.
-    plan = [(has_member ? member : dirname(active)) =>
+    plan = [if has_member member else dirname(active) end =>
                 wanted_versions(member_env.graph, [member_env.deps; worker.stdlibs])]
     active === nothing || push!(plan, dirname(active) => wanted_versions(project_env.graph, selected))
     session, plan
@@ -428,7 +428,7 @@ function transform_input(runtime::Runtime, ex)
         put!(runtime.events, Refresh())
     end
     session = @atomic SESSION.session
-    session === nothing ? ex : transform_statements(session, ex)
+    if session === nothing ex else transform_statements(session, ex) end
 end
 
 """
@@ -492,15 +492,18 @@ end
 wanted_versions(graph::ManifestGraph, ids) =
     Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => get(graph.versions, id.uuid, nothing) for id in ids)
 
-manifest_of(project_file::Union{String, Nothing}) =
-    project_file === nothing || !isfile(project_file) ? nothing : Base.project_file_manifest_path(project_file)
+manifest_of(::Nothing) = nothing
+manifest_of(project_file::String) = if isfile(project_file) Base.project_file_manifest_path(project_file) end
 
 # The files Base reads preferences from beside `project_file`, besides itself.
-preferences_files(project_file::Union{String, Nothing}) = project_file === nothing ? (nothing, nothing) :
+preferences_files(::Nothing) = (nothing, nothing)
+preferences_files(project_file::String) =
     (joinpath(dirname(project_file), "LocalPreferences.toml"), joinpath(dirname(project_file), "JuliaLocalPreferences.toml"))
 
-function file_stamp(path::Union{String, Nothing})
-    path === nothing && return MISSING_FILE_STAMP
+file_stamp(::Nothing) = MISSING_FILE_STAMP
+
+# A missing file's `stat` is all zeros: `MISSING_FILE_STAMP`.
+function file_stamp(path::String)
     st = stat(path)
-    ispath(st) ? (Float64(st.mtime), Int64(st.size), UInt64(st.inode)) : MISSING_FILE_STAMP
+    (Float64(st.mtime), Int64(st.size), UInt64(st.inode))
 end

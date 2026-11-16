@@ -72,13 +72,13 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
         is_exported = Base.isexported(mod, name)
         is_core = owner === Base || owner === Core
         if is_within(owner, mod) || (is_builtin && is_core)
-            push!(is_exported ? exported : public, name)
+            push!(if is_exported exported else public end, name)
         elseif is_exported && !is_core
             push!(reexported, name)
         end
     end
     version = pkgversion(mod)
-    PkgNames(id, version === nothing ? VersionNumber[] : [version], exported, public, reexported)
+    PkgNames(id, if version === nothing VersionNumber[] else [version] end, exported, public, reexported)
 end
 
 """
@@ -112,14 +112,14 @@ Serialise `record` to one tab-separated line, the inverse of
 the line could not be parsed back.
 """
 function catalog_line(record::PkgNames)
-    versions = isempty(record.versions) ? "-" : join(record.versions, ',')
+    versions = if isempty(record.versions) "-" else join(record.versions, ',') end
     join((id_fields(record.id)..., versions, "ok",
           name_list(record.exported), name_list(record.public), name_list(record.reexported)), '\t')
 end
 
 function catalog_line(record::PkgFailure)
-    version = record.version === nothing ? "-" : string(record.version)
-    join((id_fields(record.id)..., version, "failed", escape_message(record.message)), '\t')
+    join((id_fields(record.id)..., string(something(record.version, "-")), "failed",
+          escape_message(record.message)), '\t')
 end
 
 """
@@ -139,9 +139,10 @@ function parse_catalog_line(line::AbstractString)
         versions === nothing && return nothing
         PkgNames(id, versions, (Set{Symbol}(Symbol.(split(f, ' '; keepempty = false))) for f in fields[5:7])...)
     elseif fields[4] == "failed"
-        version = fields[3] == "-" ? nothing : tryparse(VersionNumber, fields[3])
+        version = tryparse(VersionNumber, fields[3])
+        version === nothing && fields[3] != "-" && return nothing
         message = unescape_message(join(fields[5:end], '\t'))
-        (version === nothing && fields[3] != "-") || message === nothing ? nothing : PkgFailure(id, version, message)
+        if message !== nothing PkgFailure(id, version, message) end
     end
 end
 
@@ -155,7 +156,7 @@ function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
         stripped = without_version(record, version)
         stripped === nothing || push!(merged, stripped)
     end
-    twin = new isa PkgNames ? findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) : nothing
+    twin = if new isa PkgNames findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) end
     if twin === nothing
         push!(merged, new)
     else
@@ -173,19 +174,20 @@ same_claim(a::PkgNames, b::PkgNames) = same_namespace(a, b)
 same_claim(a::PkgFailure, b::PkgFailure) = a.message == b.message
 same_claim(::CatalogRecord, ::CatalogRecord) = false
 
-observed_version(record::PkgNames) = isempty(record.versions) ? nothing : only(record.versions)
+observed_version(record::PkgNames) = if !isempty(record.versions) only(record.versions) end
 observed_version(record::PkgFailure) = record.version
 
 # A built-in's namespace is held by the `nothing` version.
-holds_version(record::PkgNames, version) = version === nothing ? isempty(record.versions) : version in record.versions
+holds_version(record::PkgNames, version) =
+    if version === nothing isempty(record.versions) else version in record.versions end
 holds_version(record::PkgFailure, version) = record.version == version
 
-without_version(record::PkgFailure, version) = record.version == version ? nothing : record
+without_version(record::PkgFailure, version) = if record.version != version record end
 
 function without_version(record::PkgNames, version)
     holds_version(record, version) || return record
     remaining = filter(!=(version), record.versions)
-    isempty(remaining) ? nothing : PkgNames(record.id, remaining, record.exported, record.public, record.reexported)
+    if !isempty(remaining) PkgNames(record.id, remaining, record.exported, record.public, record.reexported) end
 end
 
 function is_within(mod::Module, ancestor::Module)
@@ -213,7 +215,7 @@ end
 function parse_versions(field::AbstractString)
     field == "-" && return VersionNumber[]
     versions = tryparse.(VersionNumber, split(field, ','))
-    any(isnothing, versions) ? nothing : versions
+    if !any(isnothing, versions) versions end
 end
 
 escape_message(message::AbstractString) =
@@ -222,16 +224,14 @@ escape_message(message::AbstractString) =
 # `nothing` on an unknown or dangling escape.
 function unescape_message(text::AbstractString)
     out = IOBuffer()
-    chars = Iterators.Stateful(text)
-    for c in chars
-        if c != '\\'
+    is_escaped = false
+    for c in text
+        if is_escaped
+            write(out, if c == '\\' '\\' elseif c == 'n' '\n' elseif c == 'r' '\r' else return nothing end)
+        elseif c != '\\'
             write(out, c)
-        else
-            escaped = isempty(chars) ? nothing : popfirst!(chars)
-            escaped === '\\' ? write(out, '\\') :
-                escaped === 'n' ? write(out, '\n') :
-                escaped === 'r' ? write(out, '\r') : return nothing
         end
+        is_escaped = !is_escaped && c == '\\'
     end
-    String(take!(out))
+    if !is_escaped String(take!(out)) end
 end

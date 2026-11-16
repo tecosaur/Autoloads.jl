@@ -15,7 +15,7 @@ module AutoloadsPkgExt
 using Autoloads, Pkg
 
 # `nothing` without a REPL mode; then every use below fails soft.
-const REPLMode = isdefined(Pkg, :REPLMode) ? Pkg.REPLMode : nothing
+const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
 
 # Built when precompiling, against the Pkg it is loaded with (a different Pkg
 # recompiles this extension), so building costs no load time; a failure is
@@ -113,7 +113,7 @@ function wrap_pkg_commands!()
     end
     for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
         original.api isa RefreshingApi && continue
-        wrapped = REPLMode.CommandSpec((f === :api ? RefreshingApi(original.api) : getfield(original, f)
+        wrapped = REPLMode.CommandSpec((if f === :api RefreshingApi(original.api) else getfield(original, f) end
                                         for f in COMMAND_SPEC_FIELDS)...)
         for (name, spec) in specs
             spec === original && (specs[name] = wrapped)
@@ -127,7 +127,7 @@ function find_package_specs()
     specs = get(REPLMode.SPECS, "package", nothing)
     specs isa Dict{String, REPLMode.CommandSpec} || return nothing
     fieldnames(REPLMode.CommandSpec) == COMMAND_SPEC_FIELDS || return nothing
-    all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS) ? specs : nothing
+    if all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS) specs end
 end
 
 function __init__()

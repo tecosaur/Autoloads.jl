@@ -31,7 +31,7 @@ function read_healed_catalog(path::AbstractString)
     records, malformed = parse_catalog_file(path)
     malformed == 0 && return records
     try
-        # Re-read under the lock, so a line still being appended is not taken for torn.
+        # Under the lock, a line still being appended is not taken for torn.
         with_catalog_lock(path) do
             locked_records, locked_malformed = parse_catalog_file(path)
             if locked_malformed > 0
@@ -115,7 +115,11 @@ function parse_catalog_file(path::AbstractString)
     for line in eachline(path)
         isempty(line) && continue
         record = parse_catalog_line(line)
-        record === nothing ? (malformed += 1) : push!(records, record)
+        if record === nothing
+            malformed += 1
+        else
+            push!(records, record)
+        end
     end
     records, malformed
 end

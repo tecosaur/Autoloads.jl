@@ -148,7 +148,7 @@ is_in_current_env(id::Base.PkgId) = id.uuid === nothing || Base.identify_package
 
 function using_expr(req::LoadRequest)
     path = Expr(:., Symbol.(split(req.id.name, '.'))...)
-    req.name === nothing ? Expr(:using, path) : Expr(:using, Expr(:(:), path, Expr(:., req.name)))
+    Expr(:using, if req.name === nothing path else Expr(:(:), path, Expr(:., req.name)) end)
 end
 
 "Throw [`InconsistentVersions`](@ref) unless loaded packages `id` depends on match `member`'s manifest."
@@ -190,7 +190,7 @@ function member_only_roots(stmt)
         ex isa Expr || return
         if ex.head in (:using, :import)
             for arg in ex.args
-                path = arg isa Expr && arg.head in (:(:), :as) ? first(arg.args) : arg
+                path = if Meta.isexpr(arg, (:(:), :as)) first(arg.args) else arg end
                 path isa Expr && path.head === :. && first(path.args) !== :. && push!(roots, first(path.args))
             end
         else

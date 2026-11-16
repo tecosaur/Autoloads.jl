@@ -20,6 +20,8 @@ struct ManifestGraph
     deps::Dict{Base.UUID, Vector{Base.UUID}}
 end
 
+ManifestGraph() = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}())
+
 "The directory of this Julia version's global environment (`@v#.#`)."
 global_env_dir() = dirname(Base.load_path_expand("@v#.#"))
 
@@ -75,20 +77,19 @@ member gets the root's; versioned manifest names are honoured). Empty when
 there is no manifest.
 """
 function manifest_graph(project_file::AbstractString)
-    versions = Dict{Base.UUID, Union{VersionNumber, Nothing}}()
-    deps = Dict{Base.UUID, Vector{Base.UUID}}()
-    manifest = isfile(project_file) ? Base.project_file_manifest_path(project_file) : nothing
-    manifest === nothing && return ManifestGraph(versions, deps)
+    graph = ManifestGraph()
+    manifest = if isfile(project_file) Base.project_file_manifest_path(project_file) end
+    manifest === nothing && return graph
     entries = get(Base.parsed_toml(manifest), "deps", Dict{String, Any}())::Dict{String, Any}
     uuid_of = Dict{String, Base.UUID}(name => Base.UUID(first(infos::Vector{Any})["uuid"]::String)
                                       for (name, infos) in entries)
     for infos in values(entries), info in infos::Vector{Any}
         info = info::Dict{String, Any}
         uuid = Base.UUID(info["uuid"]::String)
-        versions[uuid] = haskey(info, "version") ? VersionNumber(info["version"]::String) : nothing
-        deps[uuid] = dependency_uuids(get(info, "deps", String[]), uuid_of)
+        graph.versions[uuid] = if haskey(info, "version") VersionNumber(info["version"]::String) end
+        graph.deps[uuid] = dependency_uuids(get(info, "deps", String[]), uuid_of)
     end
-    ManifestGraph(versions, deps)
+    graph
 end
 
 # `deps` is a list of names, or a name => UUID table when names are ambiguous.
@@ -109,9 +110,7 @@ The direct deps and manifest graph of `project_file`; empty for `nothing` or a
 missing file.
 """
 function environment(project_file::Union{String, Nothing})
-    project_file === nothing &&
-        return (deps = Base.PkgId[], graph = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(),
-                                                           Dict{Base.UUID, Vector{Base.UUID}}()))
+    project_file === nothing && return (deps = Base.PkgId[], graph = ManifestGraph())
     (deps = project_deps(project_file), graph = manifest_graph(project_file))
 end
 
@@ -170,12 +169,10 @@ The command [`run_julia`](@ref) runs, with `env` added to a copy of `ENV`
 taken now, so running it later still sees the current environment.
 """
 function julia_command(args::Cmd; project, env = (), nice::Bool = false, detach::Bool = false)
-    cmd = `$(Base.julia_cmd()) --startup-file=no --history-file=no`
-    project === nothing || (cmd = `$cmd --project=$project`)
-    cmd = `$cmd $args`
-    nice && Sys.which("nice") !== nothing && (cmd = `nice -n 10 $cmd`)
-    cmd = addenv(cmd, env...)
-    detach ? Base.detach(cmd) : cmd
+    niceness = if nice && Sys.which("nice") !== nothing; `nice -n 10` else `` end
+    project_flag = if project === nothing; `` else `--project=$project` end
+    cmd = addenv(`$niceness $(Base.julia_cmd()) --startup-file=no --history-file=no $project_flag $args`, env...)
+    if detach Base.detach(cmd) else cmd end
 end
 
 "Tell whoever registered in [`ENV_CHANGED`](@ref) that the environment changed."

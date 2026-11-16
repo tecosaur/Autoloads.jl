@@ -55,7 +55,7 @@ function install_transform()
         return
     end
     push!(REPL.repl_ast_transforms, repl_transform)
-    backend = isdefined(Base, :active_repl_backend) ? Base.active_repl_backend : nothing
+    backend = if isdefined(Base, :active_repl_backend) Base.active_repl_backend end
     backend !== nothing && hasproperty(backend, :ast_transforms) && push!(backend.ast_transforms, repl_transform)
     nothing
 end
@@ -75,7 +75,6 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
         undefined_globals(stmt, @__MODULE__)
     end
     owner(reg, :wl)
-    # First TAB: the wrapper's merge, and the wrapper itself on the REPL's types.
     for (text, region) in (("wl", 0 => 2), ("Workload.w", 9 => 10))
         with_autoloadable((LineEdit.NamedCompletion[LineEdit.NamedCompletion("w")], region, true), session, text)
     end
@@ -83,7 +82,7 @@ let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload
                              CompletionWrapper{REPL.REPLCompletionProvider}, LineEdit.PromptState, Module))
     precompile(Tuple{ObserveLoad, Base.PkgId})
     precompile(repl_transform, (Expr,))
-    transform_input(Runtime(Channel{Event}(Inf), "", ""), :(1))  # the first input, forgetting failed loads
+    transform_input(Runtime(Channel{Event}(Inf), "", ""), :(1))
     @static if IS_COMPILATION_SERIALISED
         precompile(Worker, (Runtime, Indexer))
         precompile(run_worker, (Worker,))

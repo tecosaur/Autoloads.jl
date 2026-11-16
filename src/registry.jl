@@ -72,14 +72,16 @@ The record of `id` containing `version`; for `nothing`, its newest record.
 """
 function names_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing})
     version === nothing && return newest_names(records_of(cat, id))
-    index = findfirst(r -> r isa PkgNames && version in r.versions, records_of(cat, id))
-    index === nothing ? nothing : records_of(cat, id)[index]
+    records = records_of(cat, id)
+    index = findfirst(r -> r isa PkgNames && version in r.versions, records)
+    if index !== nothing records[index] end
 end
 
 "The [`PkgFailure`](@ref) recorded for `id` at `version`, or `nothing`."
 function failed_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing})
-    index = findfirst(r -> r isa PkgFailure && r.version == version, records_of(cat, id))
-    index === nothing ? nothing : records_of(cat, id)[index]
+    records = records_of(cat, id)
+    index = findfirst(r -> r isa PkgFailure && r.version == version, records)
+    if index !== nothing records[index] end
 end
 
 """
@@ -134,14 +136,18 @@ function build_registry(cat::Catalog, autoload::AbstractDict, cfg::Config)
         record = something(names_at(cat, id, version), names_at(cat, id, nothing), Some(nothing))
         record === nothing && continue
         for name in autoload_names(record, package_config(cfg, id.name))
-            push!(get!(name in record.exported ? owning : reexporting, name, Base.PkgId[]), id)
+            push!(get!(if name in record.exported owning else reexporting end, name, Base.PkgId[]), id)
         end
     end
     owners = Dict{Symbol, Base.PkgId}()
     ambiguous = Dict{Symbol, Vector{Base.PkgId}}()
     for name in keys(owning) ∪ keys(reexporting)
-        claimants = haskey(owning, name) ? owning[name] : reexporting[name]
-        length(claimants) == 1 ? (owners[name] = only(claimants)) : (ambiguous[name] = claimants)
+        claimants = get(() -> reexporting[name], owning, name)
+        if length(claimants) == 1
+            owners[name] = only(claimants)
+        else
+            ambiguous[name] = claimants
+        end
     end
     Registry(owners, ambiguous)
 end
@@ -170,7 +176,7 @@ function pending_loads(reg::Registry, cfg::Config, names, isbound::Function,
     for name in names
         id = owner(reg, name)
         (id === nothing || isbound(name)) && continue
-        target = bindings_for(cfg, id.name) == AllBindings ? nothing : name
+        target = if bindings_for(cfg, id.name) == UsedBindings name end
         key = (id, target)
         (key in attempted || key in queued) && continue
         push!(queued, key)
@@ -195,5 +201,5 @@ end
 
 function newest_names(records::Vector{CatalogRecord})
     names = filter(r -> r isa PkgNames, records)
-    isempty(names) ? nothing : argmax(r -> isempty(r.versions) ? v"0" : maximum(r.versions), names)
+    if !isempty(names) argmax(r -> maximum(r.versions; init = v"0"), names) end
 end

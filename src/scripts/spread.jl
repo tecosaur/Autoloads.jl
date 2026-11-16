@@ -35,6 +35,7 @@ function main(op, source_dir, names, targets)
             entry
         end
     end
+    done, to = if op == "add"; ("Added ", " to ") else ("Removed ", " from ") end
     for (member, deferred) in targets
         project_file = joinpath(member, "Project.toml")
         project = TOML.parsefile(project_file)
@@ -44,14 +45,18 @@ function main(op, source_dir, names, targets)
             entry = wanted(section, name)
             get(table, name, nothing) == entry && continue
             is_changed = true
-            entry === nothing ? delete!(table, name) : (table[name] = entry)
+            if entry === nothing
+                delete!(table, name)
+            else
+                table[name] = entry
+            end
         end
         is_changed || continue
         filter!(((key, value),) -> !(key in SECTIONS && isempty(value)), project)
         write_toml(project_file, project)
         mkpath(dirname(deferred))
         open(io -> println(io, "resolve"), deferred, "a")
-        println(op == "add" ? "Added " : "Removed ", join(names, ", "), op == "add" ? " to " : " from ", project_file)
+        println(done, join(names, ", "), to, project_file)
     end
 end
 

@@ -93,7 +93,7 @@ end
 
 function catalog_stamp(path)
     st = stat(path)
-    ispath(st) ? (st.mtime, st.size) : nothing
+    if ispath(st); (st.mtime, st.size) end
 end
 
 function launch_and_supervise(cmd::Base.AbstractCmd, project, path, wanted, timeout_s, reported::Set{String})
@@ -136,7 +136,7 @@ function supervise(process::Base.Process, pid::Integer, output::Pipe, path, want
     try
         # Armed only by `indexing` lines, so startup and precompilation never count.
         log_path = path * ".log"
-        open(log_path, filesize(log_path) > LOG_MAX_BYTES ? "w" : "a") do log
+        open(log_path, if filesize(log_path) > LOG_MAX_BYTES "w" else "a" end) do log
             for line in eachline(output)
                 println(log, line)
                 flush(log)

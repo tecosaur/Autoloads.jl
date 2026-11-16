@@ -7,8 +7,9 @@
 #     julia --project=<env> pkg.jl <add|remove|update|resolve> <package>...
 #
 # `add` develops the paths of existing directories and adds the rest from
-# their git URL (`url#rev` for a revision) or by name; `update` updates every package of the workspace when given none. A
-# Pkg or resolver error is printed without a backtrace and exits 1.
+# their git URL (`url#rev` for a revision) or by name; `update` updates every
+# package of the workspace when given none. A Pkg or resolver error is
+# printed without a backtrace and exits 1.
 
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
 
@@ -28,7 +29,11 @@ function main(op, pkgs)
     elseif op == "remove"
         Pkg.rm(pkgs)
     elseif op == "update"
-        isempty(pkgs) ? Pkg.update(; workspace = true) : Pkg.update(pkgs; workspace = true)
+        if isempty(pkgs)
+            Pkg.update(; workspace = true)
+        else
+            Pkg.update(pkgs; workspace = true)
+        end
     elseif op == "resolve"
         Pkg.resolve()
     else

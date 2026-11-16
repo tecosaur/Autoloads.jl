@@ -38,7 +38,7 @@ count), a name or macro name that [`is_candidate`](@ref) in `reg`, or a
 """
 function is_candidate_statement(reg::Registry, stmt, member_only::Function)
     any_unquoted(stmt) do node
-        node isa Symbol ? is_candidate(reg, node) : is_member_only_import(node, member_only)
+        if node isa Symbol is_candidate(reg, node) else is_member_only_import(node, member_only) end
     end
 end
 
@@ -90,13 +90,13 @@ function undefined_globals(stmt, mod::Module)
     filter(name -> name ∉ bound && !startswith(String(name), '#') && !isdefined(mod, name), unique!(referenced))
 end
 
-# Helpers
+# ── Helpers ──
 
 "Whether `pred` holds for any node of `ex` outside quotes; stops at the first."
 function any_unquoted(pred, ex, quote_depth::Int = 0)
     quote_depth == 0 && pred(ex) && return true
     ex isa Expr || return false
-    inner = ex.head === :quote ? quote_depth + 1 : ex.head === :$ ? max(quote_depth - 1, 0) : quote_depth
+    inner = if ex.head === :quote quote_depth + 1 elseif ex.head === :$ max(quote_depth - 1, 0) else quote_depth end
     any(arg -> any_unquoted(pred, arg, inner), ex.args)
 end
 
@@ -113,7 +113,7 @@ end
 "The leftmost symbol of a dotted path `A.B.c`, or `nothing`."
 function dotted_root(path)
     path isa Symbol && return path
-    Meta.isexpr(path, :.) ? dotted_root(path.args[1]) : nothing
+    if Meta.isexpr(path, :.) dotted_root(path.args[1]) end
 end
 
 "Record into `referenced` every `GlobalRef` into `mod` within lowered `x`, and into `bound` the names it binds."
@@ -124,7 +124,7 @@ function collect_globals!(referenced::Vector{Symbol}, bound::Set{Symbol}, x, mod
         foreach(st -> collect_globals!(referenced, bound, st, mod), x.code)
     elseif x isa Expr
         for target in binding_targets(x, mod)
-            name = target isa GlobalRef ? target.name : target isa QuoteNode ? target.value : target
+            name = if target isa GlobalRef target.name elseif target isa QuoteNode target.value else target end
             name isa Symbol && push!(bound, name)
         end
         foreach(arg -> collect_globals!(referenced, bound, arg, mod), x.args)
@@ -135,7 +135,7 @@ end
 function binding_targets(ex::Expr, mod::Module)
     ex.head === :global && return ex.args
     ex.head in (:method, :globaldecl, :const, :(=)) && return ex.args[1:1]
-    callee = Meta.isexpr(ex, :call) ? ex.args[1] : nothing
+    callee = if Meta.isexpr(ex, :call) ex.args[1] end
     is_binding_call = callee isa GlobalRef && callee.name in BINDING_CALLS && length(ex.args) >= 3 && ex.args[2] === mod
-    is_binding_call ? ex.args[3:3] : ()
+    if is_binding_call ex.args[3:3] else () end
 end
