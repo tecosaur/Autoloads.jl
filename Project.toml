@@ -11,7 +11,7 @@ StyledStrings = "f489334b-da3d-4c2e-b8f0-e476e12c162b"
 
 [extensions]
 AutoloadsPkgExt = ["Pkg", "StyledStrings"]
-AutoloadsREPLExt = ["REPL", "Future"]
+AutoloadsREPLExt = ["REPL", "Future", "StyledStrings"]
 
 [compat]
 julia = "1.12"

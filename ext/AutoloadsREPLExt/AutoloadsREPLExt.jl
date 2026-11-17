@@ -11,7 +11,7 @@ session worker (see `session.jl`). Also suggests providers on `UndefVarError`
 """
 module AutoloadsREPLExt
 
-using Autoloads, REPL
+using Autoloads, REPL, StyledStrings
 using REPL: LineEdit
 using Autoloads: Registry, LoadRequest, is_candidate, manifest_graph, dependency_closure,
     project_deps, environment

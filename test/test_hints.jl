@@ -51,16 +51,17 @@ end
               Hints.RankedProvider(E, true, Hints.AutoloadPackage, nothing),
               Hints.RankedProvider(D, true, Hints.Elsewhere, nothing)]
     text = Hints.format_hint(:fa, ranked, Dict(A => ["B", "C"]), true)
-    @test text == """
+    @test String(text) == """
 
         Hint: fa is provided by packages that are not loaded:
-            - `using A` (a dependency of the active project), which re-exports it from B and C
-            - `pkg> add B` (already resolved in the active project's manifest)
-            - `using C` (from @v1.13)
-            - `using E` (an autoload package)
-            - `pkg> add D`, or `pkg> autoloads add D`"""
+          • using A  (a dependency of the active project, re-exports it from B and C)
+          • pkg> add B  (already resolved in the active project's manifest)
+          • using C  (from @v1.13)
+          • using E  (an autoload package)
+          • pkg> add D  (or pkg> autoloads add D)"""
+    @test occursin("\e[36musing A\e[39m", sprint(print, text; context = :color => true))
     without_member = Hints.format_hint(:fa, ranked[5:5], Dict{Base.PkgId, Vector{String}}(), false)
-    @test endswith(without_member, "- `pkg> add D` (run `pkg> autoloads init` to autoload packages)")
+    @test endswith(without_member, "• pkg> add D  (run pkg> autoloads init to autoload packages)")
 end
 
 end

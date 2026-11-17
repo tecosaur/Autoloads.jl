@@ -50,35 +50,35 @@ function rank_providers(providers, avail::Function)
 end
 
 """
-    format_hint(var, ranked, sources, has_member) -> String
+    format_hint(var, ranked, sources, has_member) -> AnnotatedString
 
-The hint text for `var`. `sources` maps a re-exporter to the names of the
-owners cited on its line (see [`reexport_sources`](@ref)); `has_member` selects between advising
+The hint for `var`: per provider, how to get it and a note. `sources` maps a
+re-exporter to the names of the owners its note cites (see
+[`reexport_sources`](@ref)); `has_member` selects between advising
 `autoloads add` and `autoloads init`.
 """
 function format_hint(var::Symbol, ranked::Vector{RankedProvider}, sources::Dict{Base.PkgId, Vector{String}}, has_member::Bool)
-    io = IOBuffer()
-    print(io, "\nHint: ", var, " is provided by packages that are not loaded:")
+    hint = styled"\nHint: {code:$var} is provided by packages that are not loaded:"
     for p in ranked
         name = p.id.name
-        print(io, "\n    - ")
-        if p.availability == DirectDep
-            print(io, "`using $name` (a dependency of the active project)")
+        command, note = if p.availability == DirectDep
+            "using $name", "a dependency of the active project"
         elseif p.availability == InProjectManifest
-            print(io, "`pkg> add $name` (already resolved in the active project's manifest)")
+            "pkg> add $name", "already resolved in the active project's manifest"
         elseif p.availability == OnLoadPath
-            print(io, "`using $name` (from $(p.env))")
+            "using $name", "from $(p.env)"
         elseif p.availability == AutoloadPackage
-            print(io, "`using $name` (an autoload package)")
+            "using $name", "an autoload package"
         elseif has_member
-            print(io, "`pkg> add $name`, or `pkg> autoloads add $name`")
+            "pkg> add $name", "or pkg> autoloads add $name"
         else
-            print(io, "`pkg> add $name` (run `pkg> autoloads init` to autoload packages)")
+            "pkg> add $name", "run pkg> autoloads init to autoload packages"
         end
         cited = get(sources, p.id, String[])
-        p.owns || isempty(cited) || print(io, ", which re-exports it from ", join(cited, " and "))
+        p.owns || isempty(cited) || (note *= ", re-exports it from " * join(cited, " and "))
+        hint *= styled"\n  {shadow:•} {code:$command}  {shadow:($note)}"
     end
-    String(take!(io))
+    hint
 end
 
 """
@@ -118,7 +118,10 @@ function undefvar_hint(@nospecialize(io::IO), ex::UndefVarError)
         else
             session.catalog, session.member
         end
-        print(io, provider_hint(ex.var, catalog, member))
+        # Rendered through a buffer, so that no printing is compiled for the type of `io`.
+        buffer = IOBuffer()
+        print(IOContext(buffer, :color => get(io, :color, false)::Bool), provider_hint(ex.var, catalog, member))
+        print(io, String(take!(buffer)))
     catch err
         err isa InterruptException && rethrow()
         @debug "Autoloads could not build the UndefVarError hint" exception = (err, catch_backtrace())
@@ -129,7 +132,7 @@ end
 "The hint for `var`: its providers in `catalog`, ranked for the active project and `member`. Empty without providers."
 function provider_hint(var::Symbol, catalog::Catalog, member::String)
     providers = Autoloads.providers(catalog, var)
-    isempty(providers) && return ""
+    isempty(providers) && return styled""
     (; deps, graph) = environment(Base.active_project())
     deps_uuids = Set{Base.UUID}(id.uuid for id in deps)
     manifest = Set{Base.UUID}(keys(graph.versions))
