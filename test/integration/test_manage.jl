@@ -221,7 +221,7 @@ end
     catalog = joinpath(mktempdir(), "catalog")
     global_dir = ws.global_env
     kws = (; global_dir, catalog)
-    status_text() = sprint(io -> Autoloads.status(io; kws...))
+    status_text(pkgs...) = sprint(io -> Autoloads.status(io, pkgs...; kws...))
     fixture_path(id) = joinpath(FIXTURES_DIR, id.name)
     notified = Ref(0)
     Autoloads.ENV_CHANGED[] = () -> notified[] += 1
@@ -230,30 +230,51 @@ end
             captured(() -> Autoloads.add([fixture_path(FIXTURE_A)]; kws...), ws.depot_path)
             @test member_names(ws.member) == ["FixtureA", "FixtureC"]
             @test notified[] == 1
-            @test occursin(r"FixtureA v0\.1\.0 +not indexed", status_text())
+            @test occursin(r"○ FixtureA +v0\.1\.0 +not indexed", status_text())
             write_catalog_changes!(catalog, Autoloads.CatalogRecord[
                 PkgNames(FIXTURE_A, [v"0.1.0"], Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                          Set([:fa_public]), Set{Symbol}()),
                 PkgFailure(FIXTURE_C, v"0.1.0", "FixtureC failed to load\nStacktrace: ...")])
             text = status_text()
-            @test occursin(r"FixtureA v0\.1\.0 +indexed \(4 names\)", text)
-            @test occursin(r"FixtureC v0\.1\.0 +failed: FixtureC failed to load\n", text)
+            @test occursin(r"✓ FixtureA +v0\.1\.0 +4 exports, 1 public\n", text)
+            @test occursin(r"✗ FixtureC +v0\.1\.0 +failed: FixtureC failed to load\n", text)
         end
         @testset "re-adding a failed package clears its failure" begin
             captured(() -> Autoloads.add([fixture_path(FIXTURE_C)]; kws...), ws.depot_path)
             @test !any(r -> r isa PkgFailure, read_catalog(catalog))
             @test count(r -> r isa PkgNames, read_catalog(catalog)) == 1
-            @test occursin(r"FixtureC v0\.1\.0 +not indexed", status_text())
+            @test occursin(r"○ FixtureC +v0\.1\.0 +not indexed", status_text())
             @test notified[] == 2
         end
         @testset "status" begin
             write_catalog_changes!(catalog, Autoloads.CatalogRecord[
                 PkgNames(FIXTURE_C, [v"0.1.0"], Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())])
             text = status_text()
-            @test occursin("Global autoloads", text) && occursin("Project autoloads", text)
-            @test occursin(r"Ambiguous names:\n +fa: FixtureA, FixtureC\n", text)
-            @test occursin("Precompile policy: background", text)
-            @test occursin(ws.member, text)
+            @test startswith(text, "Global autoloads  $(Base.contractuser(ws.member))\n")
+            @test occursin(r"✓ FixtureC +v0\.1\.0 +2 exports\n", text)
+            @test occursin("\nProject autoloads", text)
+            @test occursin("Ambiguous names  (not autoloaded)\n  FixtureA, FixtureC (1)\n    fa\n", text)
+            @test endswith(text, "Precompile policy  background\n")
+            styled = sprint(io -> Autoloads.status(io; kws...); context = :color => true)
+            @test occursin("\e[1mGlobal autoloads\e[22m", styled) && occursin("\e[32m✓\e[39m", styled)
+            @testset "of a package" begin
+                text = status_text("FixtureA", "Statistics")
+                @test startswith(text, "✓ FixtureA v0.1.0  4 exports, 1 public\n")
+                @test occursin("  Autoloads (3)\n    @fam, FA_CONST, FixtureA\n", text)
+                @test occursin("  Ambiguous (1)  not autoloaded\n    fa (FixtureC)\n", text)
+                @test occursin("  Public (1)  not autoloaded\n    fa_public\n", text)
+                @test occursin("\n\n○ Statistics", text) && endswith(text, "not indexed\n")
+                narrow = sprint(io -> Autoloads.status(IOContext(io, :displaysize => (24, 20)), "FixtureA"; kws...))
+                @test occursin("    @fam, FA_CONST,\n    FixtureA\n", narrow)
+                kinds = Dict(:FixtureA => 'm', Symbol("@fam") => '@', :fa => 'f', :FA_CONST => 'v')
+                write_catalog_changes!(catalog, Autoloads.CatalogRecord[
+                    PkgNames(FIXTURE_A, [v"0.1.0"], Set(keys(kinds)), Set([:fa_public]), Set{Symbol}(), kinds)])
+                @test occursin("  Autoloads (3)\n    FixtureA, @fam, FA_CONST\n", status_text("FixtureA"))
+                styled = sprint(io -> Autoloads.status(io, "FixtureA"; kws...); context = :color => true)
+                @test occursin(r"\e\[[0-9;]+mFixtureA\e\[[0-9;]+m, \e\[[0-9;]+m@fam", styled)
+                err = try status_text("FixtureA", "NotAPackage") catch err; err end
+                @test err isa ArgumentError && occursin("autoloads add NotAPackage", sprint(showerror, err))
+            end
             @testset "project autoloads" begin
                 project = mktempdir()
                 write(joinpath(project, "Project.toml"), """
@@ -269,7 +290,7 @@ end
                 before = Base.active_project()
                 try
                     Base.set_active_project(joinpath(project, "Project.toml"))
-                    @test occursin(r"Project autoloads.*\n +FixtureB +not indexed\n", status_text())
+                    @test occursin(r"Project autoloads.*\n  ○ FixtureB +not indexed\n", status_text())
                 finally
                     Base.set_active_project(before)
                 end

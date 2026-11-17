@@ -4,7 +4,7 @@
 # A module keeps these helpers apart from the other test files' globals.
 module TestPkgExt
 
-using Test, Pkg, Autoloads
+using Test, Pkg, REPL, Autoloads
 
 "The `(api, arguments...)` the Pkg REPL would call for `input`."
 function parsed(input)
@@ -43,6 +43,7 @@ end
         @test parsed("autoloads update FixtureA") == (Autoloads.update, ["FixtureA"])
         @test parsed("autoloads st") == (Autoloads.status,)
         @test parsed("autoloads status") == (Autoloads.status,)
+        @test parsed("autoloads st FixtureA FixtureB") == (Autoloads.status, "FixtureA", "FixtureB")
         @test parsed("autoloads init") == (Autoloads.init,)
         @test parsed("autoloads add FixtureA")[2] isa Vector{String}
         @test parsed("autoloads rm FixtureA")[2] isa Vector{String}
@@ -52,7 +53,12 @@ end
         @test_throws Pkg.Types.PkgError parsed("autoloads frob")
         @test_throws Pkg.Types.PkgError parsed("autoloads add")
         @test_throws Pkg.Types.PkgError parsed("autoloads init x")
-        @test_throws Pkg.Types.PkgError parsed("autoloads st x")
+    end
+    @testset "status completes autoload packages" begin
+        complete(input) = first(Base.get_extension(Pkg, :REPLExt).completions(input, lastindex(input)))
+        @test complete("autoloads st Base6") == ["Base64"]
+        @test complete("autoloads status Pkg Rand") == ["Random"]
+        @test isempty(complete("autoloads st NoSuchPack"))
     end
     @testset "help lists the group" begin
         help = sprint(show, MIME("text/plain"), Pkg.REPLMode.help)

@@ -54,8 +54,12 @@ pkg> autoloads init
 pkg> autoloads add [-g] pkg ...
 pkg> autoloads rm [-g] pkg ...
 pkg> autoloads up [-g] [pkg ...]
-pkg> autoloads status
+pkg> autoloads status [pkg ...]
 #+end_example
+
+~autoloads status~ lists the autoload packages and the names more than one of
+them claims; given packages, it lists the names each offers and which of them
+autoload it.
 
 ~autoloads add~ takes names, git URLs (=url#rev= for a revision), or paths of
 directories to develop; ~add Foo~ develops =./Foo= if that directory exists.

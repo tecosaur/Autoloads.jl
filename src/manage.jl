@@ -11,6 +11,7 @@ const SCRIPTS_DIR = joinpath(@__DIR__, "scripts")
 # In a version's `state_dir`: one `resolve`, or `update [pkg ...]`, per line
 # (`scripts/spread.jl` appends `resolve` lines too).
 const DEFERRED_FILE = "deferred"
+const PKG_ID = Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg")
 
 """
     PkgOperationFailed(op, pkgs, env, exitcode)
@@ -197,47 +198,49 @@ update(pkg::AbstractString, pkgs::AbstractString...; kwargs...) = update(String[
 
 """
     status(io::IO = stdout)
+    status([io::IO,] pkgs::AbstractString...)
 
 Print what autoloads: the global autoload packages, then those of the active
-project, each with its version and whether it is `indexed (n names)` (`n`
-names to autoload), `not indexed`, or `failed: <reason>`; then the names
-that more than one package claims, the precompile policy and the global
-autoloads environment's path. Reads the environments and the catalog afresh.
-The `global_dir` and `catalog` keywords are internal, for testing.
+project, each with its version and either its exports (the names that
+autoload) and public names, `not indexed`, or `failed: <reason>`; then the
+names that more than one package claims (which do not autoload), and the
+precompile policy.
+
+Given the names of autoload packages (standard libraries included), print
+for each what becomes of the names it offers: those that autoload it, those
+other packages also claim, the re-exports that load their owner instead,
+those the `skip` and `only` settings exclude, and its public names.
+
+Reads the environments and the catalog afresh, and loads Pkg, whose
+extension renders the report. The `global_dir` and `catalog` keywords are
+internal, for testing.
 
 # Raises
-[`ConfigError`](@ref) when the Autoloads preferences are invalid.
+- [`ConfigError`](@ref) when the Autoloads preferences are invalid.
+- `ArgumentError` for a package that does not autoload here.
 
 # Example
 ```julia
 Autoloads.status()
+Autoloads.status("Statistics")
 ```
 """
-function status(io::IO = stdout; global_dir::AbstractString = global_env_dir(),
+function status(io::IO = stdout, pkgs::AbstractString...; global_dir::AbstractString = global_env_dir(),
                 catalog::AbstractString = catalog_path())
-    cfg = load_config()
-    member = member_dir(global_dir)
-    member_project = joinpath(member, "Project.toml")
-    member_env = environment(member_project)
-    active = Base.active_project()
-    project_env = environment(active)
-    selected = [id for id in project_env.deps if cfg.project === nothing || id.name in cfg.project]
-    builtins = builtin_records()
-    cat = build_catalog([builtins; read_catalog(catalog)])
-    autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
-                            stdlib_ids(), [record.id for record in builtins], cfg)
-    print_autoloads(io, "Global autoloads:", member_env.graph, member_env.deps, cat, cfg)
-    print_autoloads(io, if active === nothing "Project autoloads:" else "Project autoloads ($active):" end,
-                    project_env.graph, selected, cat, cfg)
-    ambiguous = sort!(collect(ambiguities(build_registry(cat, autoload, cfg))); by = first)
-    println(io, "Ambiguous names:", if isempty(ambiguous) " none" else "" end)
-    for (name, ids) in ambiguous
-        println(io, "  ", name, ": ", join(sort!([id.name for id in ids]), ", "))
-    end
-    println(io, "Precompile policy: ", lowercase(string(cfg.policy)))
-    println(io, "Autoloads environment: ", member,
-            if isfile(member_project) "" else " (missing; create it with `pkg> autoloads init`)" end)
+    autoloads = read_autoloads(global_dir, catalog)
+    Base.require(PKG_ID)
+    Base.invokelatest(print_status, io, autoloads, pkgs...)
 end
+
+status(pkg::AbstractString, pkgs::AbstractString...; kwargs...) = status(stdout, pkg, pkgs...; kwargs...)
+
+"""
+    print_status(io, autoloads, pkgs...)
+
+Print what [`read_autoloads`](@ref) found as [`status`](@ref) describes. Its
+methods are in the Pkg extension: StyledStrings is loaded wherever Pkg is.
+"""
+function print_status end
 
 # ── Helpers ──
 
@@ -381,22 +384,16 @@ function package_name(dir::AbstractString)
     if isfile(project) get(Base.parsed_toml(project), "name", nothing) end
 end
 
-function print_autoloads(io::IO, title, graph::ManifestGraph, ids, cat::Catalog, cfg::Config)
-    println(io, title)
-    isempty(ids) && return println(io, "  (none)")
-    entries = map(sort(ids; by = id -> id.name)) do id
-        version = get(graph.versions, id.uuid, nothing)
-        (if version === nothing id.name else "$(id.name) v$version" end, index_state(cat, cfg, id, version))
-    end
-    width = maximum(textwidth ∘ first, entries)
-    for (label, state) in entries
-        println(io, "  ", rpad(label, width), "  ", state)
-    end
-end
-
-function index_state(cat::Catalog, cfg::Config, id::Base.PkgId, version)
-    record = names_at(cat, id, version)
-    record === nothing || return "indexed ($(length(autoload_names(record, package_config(cfg, id.name)))) names)"
-    failure = failed_at(cat, id, version)
-    if failure === nothing "not indexed" else "failed: " * first(split(failure.message, '\n')) end
+"What the settings, the environments and the `catalog` file say autoloads, read afresh."
+function read_autoloads(global_dir::AbstractString, catalog::AbstractString)
+    cfg = load_config()
+    member = member_dir(global_dir)
+    member_env = environment(joinpath(member, "Project.toml"))
+    active = Base.active_project()
+    project_env = environment(active)
+    builtins = builtin_records()
+    cat = build_catalog([builtins; read_catalog(catalog)])
+    autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
+                            stdlib_ids(), [record.id for record in builtins], cfg)
+    (; cfg, member, member_env, active, project_env, cat, autoload, registry = build_registry(cat, autoload, cfg))
 end
