@@ -15,16 +15,39 @@ const SCRIPT = """
     println(stderr, "END")
     """
 
-# The REPL shows errors on an `IOContext` over its terminal: an IO type the workload has not seen.
-const HINT_SCRIPT = """
+# A session autoloading three modules of Base, which load without compiling, and a package that is not installed.
+const SESSION_SETUP = """
     using Autoloads, REPL, Future
     using Autoloads: PkgNames, CatalogRecord, build_catalog, build_registry, parse_config
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
-    records = CatalogRecord[PkgNames(Base.PkgId(Base.UUID(UInt128(1)), "Stranger"), [v"1.0.0"],
-                                     Set([:Stranger, :stranger_fn]), Set{Symbol}(), Set{Symbol}())]
+    names(id, exported...) = PkgNames(id, VersionNumber[], Set(exported), Set{Symbol}(), Set{Symbol}())
+    records = CatalogRecord[names(Base.PkgId(Base.UUID(UInt128(1)), "Stranger"), :Stranger, :stranger_fn),
+                            names(Base.PkgId(nothing, "Base.Threads"), :Threads, :nthreads),
+                            names(Base.PkgId(nothing, "Base.Iterators"), :Iterators, :flatten),
+                            names(Base.PkgId(nothing, "Base.Meta"), :Meta, :quot)]
     catalog, cfg = build_catalog(records), parse_config(Dict{String, Any}())
-    registry = build_registry(catalog, Dict{Base.PkgId, Union{VersionNumber, Nothing}}(), cfg)
-    @atomic Ext.SESSION.session = Ext.Session(catalog, registry, cfg, mktempdir(), Set{String}())
+    autoload = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(record.id => nothing for record in records)
+    const SESSION = Ext.Session(catalog, build_registry(catalog, autoload, cfg), cfg, mktempdir(), Set{String}())
+    @atomic Ext.SESSION.session = SESSION
+    """
+
+const SESSION_SCRIPT = SESSION_SETUP * """
+    Ext.RUNTIME[] = Ext.Runtime(Channel{Ext.Event}(Inf), "", "")
+    @atomic Ext.RUNTIME[].has_refreshed = true
+    inputs = [REPL.softscope(Base.parse_input_line("nthreads")), REPL.softscope(REPL.helpmode(devnull, "flatten", Main)),
+              REPL.softscope(Base.parse_input_line("x = quot(1)"))]
+    completions = [(REPL.LineEdit.NamedCompletion[], region, true) => text
+                   for (text, region) in ("nthr" => (0 => 4), "Stranger.str" => (9 => 12))]
+    println(stderr, "START")
+    completed = [Ext.with_autoloadable(result, SESSION, text) for (result, text) in completions]
+    foreach(input -> Core.eval(Main, Ext.repl_transform(input)), inputs)
+    println(stderr, "END")
+    print(stderr, "RAN: ", all(name -> isdefined(Main, name), (:nthreads, :flatten, :quot)) &&
+                           all(c -> length(first(c)) == 1, completed))
+    """
+
+# The REPL shows errors on an `IOContext` over its terminal: an IO type the workload has not seen.
+const HINT_SCRIPT = SESSION_SETUP * """
     io = IOContext(IOContext(devnull, :color => true), :limit => true)
     errors = [UndefVarError(name, Main) for name in (:stranger_fn, :no_such_name)]
     println(stderr, "START")
@@ -49,6 +72,12 @@ end
 
 @testset "inputs compile nothing of Autoloads'" begin
     @test !occursin("Autoloads", first(traced_compilation(SCRIPT)))
+end
+
+@testset "autoloading inputs, help queries and completions compile nothing of Autoloads'" begin
+    traced, rest = traced_compilation(SESSION_SCRIPT)
+    @test !occursin("Autoloads", traced)
+    @test endswith(rest, "RAN: true")
 end
 
 @testset "the first UndefVarError hint compiles nothing of Autoloads'" begin

@@ -26,7 +26,7 @@ to leave it unchanged.
 map_statements(st -> :(println(\$st)), Meta.parse("a; b")) # Expr(:toplevel, :(println(a)), :(println(b)))
 ```
 """
-function map_statements(f, ex)
+function map_statements(f, @nospecialize(ex))
     ex isa LineNumberNode && return ex
     Meta.isexpr(ex, :toplevel) || return f(ex)
     Expr(:toplevel, Any[map_statements(f, arg) for arg in ex.args]...)
