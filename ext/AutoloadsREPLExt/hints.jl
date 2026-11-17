@@ -107,7 +107,7 @@ end
 no loaded module provides, list the cataloged packages that do. Reads the
 catalog file when no session is running. Never throws.
 """
-function undefvar_hint(io::IO, ex::UndefVarError)
+function undefvar_hint(@nospecialize(io::IO), ex::UndefVarError)
     ex.scope === Main || return
     try
         is_provided_by_loaded_module(ex.var) && return
@@ -118,21 +118,25 @@ function undefvar_hint(io::IO, ex::UndefVarError)
         else
             session.catalog, session.member
         end
-        providers = Autoloads.providers(catalog, ex.var)
-        isempty(providers) && return
-        (; deps, graph) = environment(Base.active_project())
-        deps_uuids = Set{Base.UUID}(id.uuid for id in deps)
-        manifest = Set{Base.UUID}(keys(graph.versions))
-        member_project = joinpath(member, "Project.toml")
-        member_deps = Set{Base.UUID}(id.uuid for id in project_deps(member_project))
-        avail(id) = availability(id, deps_uuids, manifest, member_deps, loadpath_env)
-        print(io, format_hint(ex.var, rank_providers(providers, avail), reexport_sources(providers, graph),
-                              isfile(member_project)))
+        print(io, provider_hint(ex.var, catalog, member))
     catch err
         err isa InterruptException && rethrow()
         @debug "Autoloads could not build the UndefVarError hint" exception = (err, catch_backtrace())
     end
     nothing
+end
+
+"The hint for `var`: its providers in `catalog`, ranked for the active project and `member`. Empty without providers."
+function provider_hint(var::Symbol, catalog::Catalog, member::String)
+    providers = Autoloads.providers(catalog, var)
+    isempty(providers) && return ""
+    (; deps, graph) = environment(Base.active_project())
+    deps_uuids = Set{Base.UUID}(id.uuid for id in deps)
+    manifest = Set{Base.UUID}(keys(graph.versions))
+    member_project = joinpath(member, "Project.toml")
+    member_deps = Set{Base.UUID}(id.uuid for id in project_deps(member_project))
+    avail(id) = availability(id, deps_uuids, manifest, member_deps, loadpath_env)
+    format_hint(var, rank_providers(providers, avail), reexport_sources(providers, graph), isfile(member_project))
 end
 
 # Base's own hint covers a name a loaded module exports or publishes.

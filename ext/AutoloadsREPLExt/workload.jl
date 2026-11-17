@@ -52,7 +52,9 @@ try
                 maintain_environment!(worker)
                 observe!(worker, [Base.PkgId(Autoloads)])
             end
+            provider_hint(:wl, catalog, member)
         end
+        precompile(undefvar_hint, (IO, UndefVarError))
         precompile(prepare_statement, (Expr,))
         precompile(prepare_statement, (Symbol,))
         precompile(wrap_completion!, (REPL.LineEditREPL,))
