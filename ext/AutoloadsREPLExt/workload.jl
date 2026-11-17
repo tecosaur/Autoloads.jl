@@ -12,12 +12,16 @@ try
         cfg = parse_config(Dict{String, Any}())
         reg = build_registry(catalog, Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0"), cfg)
         session = Session(catalog, reg, cfg, "", Set{String}())
-        input = REPL.softscope(Base.parse_input_line("x = 1; y = [wl(x), Workload.wp(2)]; @wl f(z) = wl(z)"))
+        input = REPL.softscope(Base.parse_input_line("x = 1; y = [wl(x), Workload.wp(2)]; @wl f(z) = wl(z); wl"))
         transform_statements(session, input)
         for stmt in input.args[end].args
             statement_macros(stmt)
+            help_query_names(stmt)
             undefined_globals(stmt, @__MODULE__)
         end
+        help = REPL.helpmode(devnull, "Workload.wl(x)", @__MODULE__)
+        statement_macros(help)
+        help_query_names(help)
         owner(reg, :wl)
         for (text, region) in (("wl", 0 => 2), ("Workload.w", 9 => 10))
             with_autoloadable((LineEdit.NamedCompletion[LineEdit.NamedCompletion("w")], region, true), session, text)
@@ -50,6 +54,7 @@ try
             end
         end
         precompile(prepare_statement, (Expr,))
+        precompile(prepare_statement, (Symbol,))
         precompile(wrap_completion!, (REPL.LineEditREPL,))
         precompile(Tuple{Type{CompletionWrapper}, REPL.REPLCompletionProvider})
         precompile(load_pending!, (Session, Vector{Symbol}))

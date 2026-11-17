@@ -24,6 +24,8 @@ const is_candidate = Autoloads.is_candidate
 const WAIT_S = 120
 const THREADS_ID = Base.PkgId(nothing, "Base.Threads")
 const PKG_ID = Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg")
+const STATISTICS_ID = Base.PkgId(Base.UUID("10745b16-79ce-11e8-11f9-7d13ad32a3b2"), "Statistics")
+const DISTRIBUTED_ID = Base.PkgId(Base.UUID("8ba89e20-285c-5b6f-9357-94700520ee1b"), "Distributed")
 
 repl_input(s) = REPL.softscope(Base.parse_input_line(s))
 
@@ -38,6 +40,9 @@ function eval_input(ex)
 end
 
 run_input(s) = eval_input(Ext.repl_transform(repl_input(s)))
+
+"Evaluate `s` as help-mode input, returning the documentation's text."
+run_help(s) = string(eval_input(Ext.repl_transform(REPL.softscope(REPL.helpmode(devnull, s, Main)))))
 
 current_session() = @atomic Ext.SESSION.session
 
@@ -192,6 +197,18 @@ elseif GROUP == "stdlib"
         @test Ext.repl_transform(ex) == ex
         @test_throws UndefVarError run_input("status")
         @test !is_loaded(PKG_ID)
+    end
+    @testset "a bare name" begin
+        @test !is_loaded(STATISTICS_ID)
+        @test run_input("mean") isa Function
+        @test is_loaded(STATISTICS_ID)
+    end
+    @testset "help mode" begin
+        @test !is_loaded(DISTRIBUTED_ID)
+        @test occursin("No documentation found", run_help("no_such_name"))
+        @test !is_loaded(DISTRIBUTED_ID)
+        @test occursin("pmap(f", run_help("pmap"))
+        @test is_loaded(DISTRIBUTED_ID) && isdefined(Main, :pmap)
     end
 elseif GROUP == "project"
     unselected, without, selecting = (joinpath(dir, "Project.toml") for dir in EXTRA)

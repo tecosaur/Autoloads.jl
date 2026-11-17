@@ -177,16 +177,18 @@ end
 
 Load what `stmt` needs into `Main` just before it is evaluated: the owners
 of the undefined macros it invokes, then those of the undefined `Main`
-globals it reads once lowered. Failures are reported by [`load!`](@ref) and
-never thrown, except an interrupt.
+globals it reads once lowered, or for help-mode input those of the undefined
+names it asks about (see [`help_query_names`](@ref)). Failures are reported
+by [`load!`](@ref) and never thrown, except an interrupt.
 """
 function prepare_statement(stmt)
     session = @atomic SESSION.session
     session === nothing && return nothing
     try
         load_pending!(session, statement_macros(stmt))
-        # Lowering runs in the newest world too, so macros just loaded expand.
-        Base.invokelatest(() -> load_pending!(session, undefined_globals(stmt, Main)))
+        # Lowering runs in the newest world, so macros just loaded expand.
+        load_pending!(session, @something(help_query_names(stmt),
+                                          Base.invokelatest(undefined_globals, stmt, Main)::Vector{Symbol}))
     catch err
         is_interrupt(err) && rethrow()
         report_once!(RUNTIME[]::Runtime, :has_reported_prepare_failure, "Autoloads failed to prepare a statement",

@@ -8,6 +8,9 @@
 # Lowered calls `f(mod, name, ...)` that bind `name` in `mod`, across 1.12-1.14.
 const BINDING_CALLS = (:declare_global, :declare_const, :setglobal!, :define_method)
 
+# The macro of `REPL` that `REPL.helpmode` hands the queried expression to.
+const HELP_MACRO = QuoteNode(Symbol("@repl"))
+
 """
     map_statements(f, ex) -> Any
 
@@ -86,8 +89,30 @@ function undefined_globals(stmt, mod::Module)
         return Symbol[]
     end
     referenced, bound = Symbol[], Set{Symbol}()
-    collect_globals!(referenced, bound, lowered, mod)
+    # A bare name lowers to itself.
+    if lowered isa Symbol push!(referenced, lowered) else collect_globals!(referenced, bound, lowered, mod) end
     filter(name -> name ∉ bound && !startswith(String(name), '#') && !isdefined(mod, name), unique!(referenced))
+end
+
+"""
+    help_query_names(stmt) -> Union{Vector{Symbol}, Nothing}
+
+The names and macro names outside quotes in the expression that help-mode
+input `stmt` (as built by `REPL.helpmode`) asks about, in order of
+appearance without repeats: `help?> A.f(x)` gives `[:A, :x]`. `nothing` when
+`stmt` is not help-mode input. Syntactic: help expands no macro of the query.
+"""
+function help_query_names(stmt)
+    names = Symbol[]
+    is_help = any_unquoted(stmt) do node
+        Meta.isexpr(node, :macrocall) && length(node.args) >= 4 || return false
+        callee = node.args[1]
+        # Not `==`: comparing expressions compiles on first use.
+        Meta.isexpr(callee, :., 2) && callee.args[1] === REPL && callee.args[2] === HELP_MACRO || return false
+        any_unquoted(name -> (name isa Symbol && push!(names, name); false), node.args[4])
+        true
+    end
+    if is_help unique!(names) end
 end
 
 # ── Helpers ──

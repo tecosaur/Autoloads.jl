@@ -82,6 +82,26 @@ end
     Core.eval(mod, :(DataFrame = 1))
     @test Scan.undefined_globals(:(DataFrame + q), mod) == [:q]
     @test sort!(Scan.undefined_globals(only(statements_of(repl_input("for i in xs; total = f(i); end"))), Module())) == [:f, :xs]
+    @test Scan.undefined_globals(only(statements_of(repl_input("DataFrame"))), Module()) == [:DataFrame]
+    @test isempty(Scan.undefined_globals(only(statements_of(repl_input("DataFrame"))), mod))
+end
+
+@testset "help queries" begin
+    reg = scan_registry()
+    help_statement(s) = only(statements_of(REPL.softscope(REPL.helpmode(devnull, s, Main))))
+    queried(s) = Scan.help_query_names(help_statement(s))
+    @test queried("DataFrame") == [:DataFrame]
+    @test queried("?DataFrame") == [:DataFrame]
+    @test queried("DataFrames.DataFrame(x, x)") == [:DataFrames, :x]
+    @test queried("@btime") == [Symbol("@btime")]
+    @test queried("Profile.@profile") == [:Profile]
+    @test isempty(queried("\"DataFrame\""))
+    @test isempty(queried(":(DataFrame)"))
+    @test Scan.is_candidate_statement(reg, help_statement("DataFrame"), Returns(false))
+    @test !Scan.is_candidate_statement(reg, help_statement("sum"), Returns(false))
+    for input in ("DataFrame", "DataFrame(x)", "@btime f()", "using DataFrames")
+        @test Scan.help_query_names(only(statements_of(repl_input(input)))) === nothing
+    end
 end
 
 """
