@@ -165,8 +165,8 @@ function parse_catalog_line(line::AbstractString)
             if startswith(token, '/')
                 parts = split(token, '/')
                 length(parts) == 3 || return nothing
-                uuid = if !isempty(parts[2]) @something(tryparse(Base.UUID, parts[2]), return nothing) end
-                origin = Base.PkgId(uuid, String(parts[3]))
+                origin_uuid = if !isempty(parts[2]) @something(tryparse(Base.UUID, parts[2]), return nothing) end
+                origin = Base.PkgId(origin_uuid, String(parts[3]))
             elseif origin !== nothing && is_name(token)
                 origins[name(token)] = origin
             end

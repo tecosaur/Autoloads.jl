@@ -184,44 +184,49 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple)
 end
 
 function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple, pkgs::AbstractString...)
-    (; cfg, cat, autoload, registry) = autoloads
-    ids = Dict(id.name => id for id in keys(autoload))
+    ids = Dict(id.name => id for id in keys(autoloads.autoload))
     for pkg in pkgs
         haskey(ids, pkg) || throw(ArgumentError("Autoloads.status: $pkg is not an autoload package here. \
             `pkg> autoloads st` lists them; `pkg> autoloads add $pkg` adds it."))
     end
-    for (i, id) in enumerate(ids[pkg] for pkg in pkgs)
-        version = autoload[id]
-        glyph, state = index_cells(index_state(autoloads, id, version), (0, 0))
+    for (i, pkg) in enumerate(pkgs)
         i == 1 || println(io)
-        println(io, glyph, styled" {bold:$(id.name)}", if version === nothing "" else styled" {shadow:v$version}" end, "  ", state)
-        record = names_at(cat, id, version)
-        record === nothing && continue
-        rank(name) = findfirst(==(if startswith(String(name), '@') '@' else get(record.kinds, name, '?') end) ∘ first, KIND_FACES)
-        function shown(name)
-            face = last(get(KIND_FACES, something(rank(name), 0), '?' => :default))
-            styled"{code,$face:$name}"
-        end
-        by_kind(names) = sort!(collect(names); by = name -> (something(rank(name), typemax(Int)), lowercase(String(name))))
-        function print_names(title, note, names)
-            isempty(names) && return
-            println(io, styled"\n  {bold:$title} ($(length(names)))", if isempty(note) "" else styled"  {shadow:$note}" end)
-            print_wrapped(io, names)
-        end
-        offered = by_kind(autoload_names(record, package_config(cfg, id.name)))
-        print_names("Autoloads", "", [shown(name) for name in offered if owner(registry, name) == id])
-        function claimed(title, note, claims)
-            others(name) = join(sort!([other.name for other in claims[name] if other != id]), ", ")
-            print_names(title, note, [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(claims, name)])
-        end
-        claimed("Shared", "autoloaded once one of their packages is loaded", registry.shared)
-        claimed("Ambiguous", "not autoloaded", registry.ambiguous)
-        print_names("Re-exported", "loads the owner",
-                    [shown(name) * styled" {shadow:($(owner(registry, name).name))}" for name in offered
-                     if owner(registry, name) ∉ (id, nothing)])
-        print_names("Excluded", "by the settings", map(shown, by_kind(setdiff(record.exported ∪ record.reexported, offered))))
-        print_names("Public", "not autoloaded", map(shown, by_kind(record.public)))
+        print_package(io, autoloads, ids[pkg])
     end
+end
+
+function print_package(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.PkgId)
+    (; cfg, cat, autoload, registry) = autoloads
+    version = autoload[id]
+    glyph, state = index_cells(index_state(autoloads, id, version), (0, 0))
+    println(io, glyph, styled" {bold:$(id.name)}", if version === nothing "" else styled" {shadow:v$version}" end, "  ", state)
+    record = names_at(cat, id, version)
+    record === nothing && return
+    kind(name) = if startswith(String(name), '@') '@' else get(record.kinds, name, '?') end
+    rank(name) = something(findfirst(==(kind(name)) ∘ first, KIND_FACES), length(KIND_FACES) + 1)
+    by_kind(names) = sort!(collect(names); by = name -> (rank(name), lowercase(String(name))))
+    function shown(name)
+        face = last(get(KIND_FACES, rank(name), '?' => :default))
+        styled"{code,$face:$name}"
+    end
+    function print_names(title, note, names)
+        isempty(names) && return
+        println(io, styled"\n  {bold:$title} ($(length(names)))", if isempty(note) "" else styled"  {shadow:$note}" end)
+        print_wrapped(io, names)
+    end
+    function print_claimed(title, note, claims)
+        others(name) = join(sort!([other.name for other in claims[name] if other != id]), ", ")
+        print_names(title, note, [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(claims, name)])
+    end
+    offered = by_kind(autoload_names(record, package_config(cfg, id.name)))
+    print_names("Autoloads", "", [shown(name) for name in offered if owner(registry, name) == id])
+    print_claimed("Shared", "autoloaded once one of their packages is loaded", registry.shared)
+    print_claimed("Ambiguous", "not autoloaded", registry.ambiguous)
+    print_names("Re-exported", "loads the owner",
+                [shown(name) * styled" {shadow:($(owner(registry, name).name))}" for name in offered
+                 if owner(registry, name) ∉ (id, nothing)])
+    print_names("Excluded", "by the settings", map(shown, by_kind(setdiff(record.exported ∪ record.reexported, offered))))
+    print_names("Public", "not autoloaded", map(shown, by_kind(record.public)))
 end
 
 function print_packages(@nospecialize(io::IO), autoloads::NamedTuple, ids::Vector{Base.PkgId}, graph::ManifestGraph)
