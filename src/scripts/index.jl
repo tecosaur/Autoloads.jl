@@ -65,7 +65,7 @@ function index_package(path, id::Base.PkgId, version::Union{VersionNumber, Nothi
     report("indexing $(id.uuid)")
     record = try
         names = Base.invokelatest(extract_names, Base.require(id), id)
-        if version === nothing names else PkgNames(id, [version], names.exported, names.public, names.reexported) end
+        if version === nothing names else with_versions(names, [version]) end
     catch err
         is_interrupt(err) && rethrow()
         @error "Failed to load $(id.name) for indexing" exception = (err, catch_backtrace())

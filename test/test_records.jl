@@ -27,6 +27,8 @@ failure_record(version, message = "boom") = PkgFailure(ID_A, VersionNumber(versi
     @test r.exported == Set([Symbol("@m"), :ExtractFixture, :Inner, :T, :f, :g, :x])
     @test r.public == Set([:p])
     @test r.reexported == Set([:base64encode])
+    @test r.kinds == Dict(:ExtractFixture => 'm', :Inner => 'm', Symbol("@m") => '@', :f => 'f', :g => 'f', :p => 'f',
+                          :base64encode => 'f', :T => 't', :x => 'v')
     t = extract_names(Base.Threads, Base.PkgId(nothing, "Base.Threads"))
     @test Symbol("@spawn") in t.exported && :nthreads in t.exported && isempty(t.versions)
     @test :Threads in t.exported
@@ -98,7 +100,9 @@ function random_record(rng)
         message = join(rand(rng, ("a", " ", "\t", "\n", "\\", "\\n", "\r", "end")), "") * "x"
         PkgFailure(id, rand(rng, Bool) ? rand(rng, [v"1.0.0", v"2.1.0-dev"]) : nothing, message)
     else
-        PkgNames(id, random_versions(rng), random_symbols(rng), random_symbols(rng), random_symbols(rng))
+        sets = (random_symbols(rng), random_symbols(rng), random_symbols(rng))
+        kinds = Dict{Symbol, Char}(name => rand(rng, "m@ftv") for names in sets for name in names if rand(rng, Bool))
+        PkgNames(id, random_versions(rng), sets..., kinds)
     end
 end
 
@@ -110,7 +114,10 @@ end
     end
     @testset "format" begin
         line = catalog_line(names_record(["1.0.0", "2.0.0"], [:g, :f], [:p], Symbol[]))
-        @test line == "$UUID_A\tA\t1.0.0,2.0.0\tok\tf g\tp\t"
+        @test line == "$UUID_A\tA\t1.0.0,2.0.0\tok\t?f ?g\t?p\t"
+        kinded = PkgNames(ID_A, [v"1.0.0"], Set([:A, :f, Symbol("@m")]), Set([:T]), Set([:x]),
+                          Dict(:A => 'm', :f => 'f', Symbol("@m") => '@', :T => 't', :x => 'v'))
+        @test catalog_line(kinded) == "$UUID_A\tA\t1.0.0\tok\t@@m mA ff\ttT\tvx"
         @test catalog_line(names_record(String[])) == "$UUID_A\tA\t-\tok\t\t\t"
         @test catalog_line(failure_record("1.0.0", "a\\b\nc")) == "$UUID_A\tA\t1.0.0\tfailed\ta\\\\b\\nc"
     end
@@ -124,16 +131,19 @@ end
     for line in (
         "",
         "garbage",
-        "$UUID_A\tA\t1.0.0\tok\tf\tp",
-        "$UUID_A\tA\t1.0.0\tok\tf\tp\tq\textra",
-        "$UUID_A\tA\tnotaversion\tok\tf\tp\t",
-        "$UUID_A\tA\t1.0.0\tmaybe\tf\tp\t",
+        "$UUID_A\tA\t1.0.0\tok\tff\t?p",
+        "$UUID_A\tA\t1.0.0\tok\tff\t?p\tq\textra",
+        "$UUID_A\tA\tnotaversion\tok\tff\t?p\t",
+        "$UUID_A\tA\t1.0.0\tmaybe\tff\t?p\t",
         "$UUID_A\tA\t1.0.0\tfailed",
         "$UUID_A\tA\t1.0.0\tfailed\tbad\\escape",
         "$UUID_A\tA\t1.0.0\tfailed\ttrailing\\",
-        "not-a-uuid\tA\t1.0.0\tok\tf\tp\t",
-        "\tA\t1.0.0\tok\tf\tp\t",
-        "$UUID_A\t\t1.0.0\tok\tf\tp\t",
+        "not-a-uuid\tA\t1.0.0\tok\tff\t?p\t",
+        "\tA\t1.0.0\tok\tff\t?p\t",
+        "$UUID_A\t\t1.0.0\tok\tff\t?p\t",
+        "$UUID_A\tA\t1.0.0\tok\tf g\tp\t",
+        "$UUID_A\tA\t1.0.0\tok\tzf\t?p\t",
+        "$UUID_A\tA\t1.0.0\tok\tff\t?\t",
     )
         @test parse_catalog_line(line) === nothing
     end
