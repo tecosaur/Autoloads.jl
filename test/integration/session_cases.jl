@@ -130,6 +130,7 @@ elseif GROUP == "sequencing"
         @test isempty(Ext.LOAD.failed)
     end
     @testset "a stopped worker handles no more batches" begin
+        flush_worker()
         before = current_session()
         Ext.stop_worker!(Ext.RUNTIME[])
         Autoloads.notify_env_change()
