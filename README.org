@@ -44,6 +44,10 @@ Autoloads only acts on names that are undefined and not locally bound. If the
 active project provides an autoload package, it is loaded from there. Indexing
 and precompilation happen in the background.
 
+A name that several autoload packages provide is not autoloaded, unless they
+all re-export it from one package (as ~fit~ from StatsAPI, by both StatsBase
+and Distributions): it then comes from whichever of them is loaded first.
+
 Autoloadable names also tab-complete, and an ~UndefVarError~ lists the
 packages that provide the name.
 

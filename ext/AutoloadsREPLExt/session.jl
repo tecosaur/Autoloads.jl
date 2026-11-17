@@ -440,7 +440,7 @@ end
 
 function load_pending!(session::Session, names)
     isbound(name) = isdefined(Main, name)
-    for request in pending_loads(session.registry, session.config, names, isbound, LOAD.attempted)
+    for request in pending_loads(session.registry, session.config, names, isbound, Base.root_module_exists, LOAD.attempted)
         load!(LOAD, request, session.member; announce = session.config.log)
     end
 end

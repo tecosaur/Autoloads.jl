@@ -15,13 +15,17 @@ const SCRIPT = """
     println(stderr, "END")
     """
 
-# A session autoloading three modules of Base, which load without compiling, and a package that is not installed.
+# A session autoloading three modules of Base, which load without compiling, a package that is not installed, and
+# REPL, sharing a name with it.
 const SESSION_SETUP = """
     using Autoloads, REPL, Future
     using Autoloads: PkgNames, CatalogRecord, build_catalog, build_registry, parse_config
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
-    names(id, exported...) = PkgNames(id, VersionNumber[], Set(exported), Set{Symbol}(), Set{Symbol}())
-    records = CatalogRecord[names(Base.PkgId(Base.UUID(UInt128(1)), "Stranger"), :Stranger, :stranger_fn),
+    origin = Base.PkgId(Base.UUID(UInt128(2)), "Origin")
+    names(id, exported...; shared = Symbol[]) = PkgNames(id, VersionNumber[], Set(exported), Set{Symbol}(), Set(shared);
+                                                         origins = Dict(name => origin for name in shared))
+    records = CatalogRecord[names(Base.PkgId(Base.UUID(UInt128(1)), "Stranger"), :Stranger, :stranger_fn; shared = [:LineEditREPL]),
+                            names(Base.PkgId(REPL), :REPL; shared = [:LineEditREPL]),
                             names(Base.PkgId(nothing, "Base.Threads"), :Threads, :nthreads),
                             names(Base.PkgId(nothing, "Base.Iterators"), :Iterators, :flatten),
                             names(Base.PkgId(nothing, "Base.Meta"), :Meta, :quot)]
@@ -35,14 +39,14 @@ const SESSION_SCRIPT = SESSION_SETUP * """
     Ext.RUNTIME[] = Ext.Runtime(Channel{Ext.Event}(Inf), "", "")
     @atomic Ext.RUNTIME[].has_refreshed = true
     inputs = [REPL.softscope(Base.parse_input_line("nthreads")), REPL.softscope(REPL.helpmode(devnull, "flatten", Main)),
-              REPL.softscope(Base.parse_input_line("x = quot(1)"))]
+              REPL.softscope(Base.parse_input_line("x = quot(1)")), REPL.softscope(Base.parse_input_line("LineEditREPL"))]
     completions = [(REPL.LineEdit.NamedCompletion[], region, true) => text
                    for (text, region) in ("nthr" => (0 => 4), "Stranger.str" => (9 => 12))]
     println(stderr, "START")
     completed = [Ext.with_autoloadable(result, SESSION, text) for (result, text) in completions]
     foreach(input -> Core.eval(Main, Ext.repl_transform(input)), inputs)
     println(stderr, "END")
-    print(stderr, "RAN: ", all(name -> isdefined(Main, name), (:nthreads, :flatten, :quot)) &&
+    print(stderr, "RAN: ", all(name -> isdefined(Main, name), (:nthreads, :flatten, :quot, :LineEditREPL)) &&
                            all(c -> length(first(c)) == 1, completed))
     """
 

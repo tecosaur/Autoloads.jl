@@ -5,13 +5,14 @@ using Test
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, Config, PackageConfig, parse_config,
     ManifestGraph, AllBindings, UsedBindings, Catalog, Registry, LoadRequest, build_catalog,
     records_of, names_at, failed_at, providers, autoload_set, build_registry, owner,
-    is_candidate, ambiguities, pending_loads, to_index, builtin_records
+    is_candidate, pending_loads, to_index, builtin_records
 
 pkg_id(name, n) = Base.PkgId(Base.UUID(UInt128(n)), name)
 const ID_X, ID_Y, ID_Z = pkg_id("X", 1), pkg_id("Y", 2), pkg_id("Z", 3)
 
-names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Symbol[]) =
-    PkgNames(id, VersionNumber.(versions), Set([Symbol(id.name); exported]), Set(public), Set(reexported))
+names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Symbol[], origin = nothing) =
+    PkgNames(id, VersionNumber.(versions), Set([Symbol(id.name); exported]), Set(public), Set(reexported);
+             origins = Dict{Symbol, Base.PkgId}(name => origin for name in reexported if origin !== nothing))
 
 # Neither stdlibs nor the project autoload unless a test asks.
 cfg_of(; kwargs...) = parse_config(Dict{String, Any}("stdlib" => false, "project" => false,
@@ -71,15 +72,25 @@ end
     own = names_for(ID_X, ["1.0.0"], [:f]); re = names_for(ID_Y, ["1.0.0"]; reexported = [:f])
     for records in ([own, re], [re, own])
         r = registry_of(records, auto(ID_X, ID_Y))
-        @test owner(r, :f) == ID_X && isempty(ambiguities(r))
+        @test owner(r, :f) == ID_X && isempty(r.ambiguous)
     end
     # two owners, and two re-exporters with no owner, are ambiguous
     r = registry_of([own, names_for(ID_Y, ["1.0.0"], [:f])], auto(ID_X, ID_Y))
-    @test !is_candidate(r, :f) && ambiguities(r)[:f] == [ID_X, ID_Y]
+    @test !is_candidate(r, :f) && r.ambiguous[:f] == [ID_X, ID_Y]
     r = registry_of([names_for(ID_X, ["1.0.0"]; reexported = [:f]), re], auto(ID_X, ID_Y))
-    @test sort(ambiguities(r)[:f]; by = i -> i.name) == [ID_X, ID_Y]
+    @test sort(r.ambiguous[:f]; by = i -> i.name) == [ID_X, ID_Y]
     r = registry_of([names_for(ID_X, ["1.0.0"]; reexported = [:f])], auto(ID_X))
     @test owner(r, :f) == ID_X
+    # re-exporters of one known origin share the name, unless the origin autoloads too
+    from(id, origin) = names_for(id, ["1.0.0"]; reexported = [:f], origin)
+    r = registry_of([from(ID_X, ID_Z), from(ID_Y, ID_Z)], auto(ID_X, ID_Y))
+    @test r.shared[:f] == [ID_X, ID_Y] && is_candidate(r, :f) && owner(r, :f) === nothing && isempty(r.ambiguous)
+    r = registry_of([from(ID_X, ID_Z), from(ID_Y, ID_Z), names_for(ID_Z, ["1.0.0"], [:f])], auto(ID_X, ID_Y, ID_Z))
+    @test owner(r, :f) == ID_Z && isempty(r.shared)
+    for other in (ID_X, nothing)
+        r = registry_of([from(ID_X, ID_Z), from(ID_Y, other)], auto(ID_X, ID_Y))
+        @test haskey(r.ambiguous, :f) && isempty(r.shared)
+    end
     # version selection: exact record, else newest
     recs = [names_for(ID_X, ["1.0.0"], [:old]), names_for(ID_X, ["2.0.0"], [:new])]
     @test owner(registry_of(recs, Dict(ID_X => v"1.0.0")), :old) == ID_X
@@ -99,7 +110,7 @@ end
     records = [names_for(dist, ["1.0.0"], [spawn]), threads]
     wanted = auto(dist, threads.id)
     r = registry_of(records, wanted)
-    @test haskey(ambiguities(r), spawn)
+    @test haskey(r.ambiguous, spawn)
     r = registry_of(records, wanted, cfg_of(packages = Dict("Distributed" => Dict("skip" => ["@spawn"]))))
     @test owner(r, spawn) == threads.id
 end
@@ -108,20 +119,31 @@ end
     reg = registry_of([names_for(ID_X, ["1.0.0"], [:f, :g]), names_for(ID_Y, ["1.0.0"], [:h])],
                       Dict(ID_X => v"1.0.0", ID_Y => v"1.0.0"))
     none = Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}()
-    unbound = _ -> false
+    unbound = unloaded = Returns(false)
     attempted_of(pairs...) = Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}(pairs)
     all_cfg = cfg_of()
     used_cfg = cfg_of(bindings = "used")
-    @test pending_loads(reg, all_cfg, [:f, :g, :h, :zzz], unbound, none) ==
+    @test pending_loads(reg, all_cfg, [:f, :g, :h, :zzz], unbound, unloaded, none) ==
           [LoadRequest(ID_X, :f, nothing), LoadRequest(ID_Y, :h, nothing)]
-    @test pending_loads(reg, used_cfg, [:f, :g, :zzz], unbound, none) ==
+    @test pending_loads(reg, used_cfg, [:f, :g, :zzz], unbound, unloaded, none) ==
           [LoadRequest(ID_X, :f, :f), LoadRequest(ID_X, :g, :g)]
-    @test pending_loads(reg, used_cfg, [:f, :g], ==(:f), none) == [LoadRequest(ID_X, :g, :g)]
-    @test isempty(pending_loads(reg, all_cfg, [:f], unbound, attempted_of((ID_X, nothing))))
-    @test pending_loads(reg, used_cfg, [:f, :g], unbound, attempted_of((ID_X, :f))) == [LoadRequest(ID_X, :g, :g)]
+    @test pending_loads(reg, used_cfg, [:f, :g], ==(:f), unloaded, none) == [LoadRequest(ID_X, :g, :g)]
+    @test isempty(pending_loads(reg, all_cfg, [:f], unbound, unloaded, attempted_of((ID_X, nothing))))
+    @test pending_loads(reg, used_cfg, [:f, :g], unbound, unloaded, attempted_of((ID_X, :f))) == [LoadRequest(ID_X, :g, :g)]
     mixed = cfg_of(packages = Dict("Y" => Dict("bindings" => "used")))
-    @test pending_loads(reg, mixed, [:f, :g, :h], unbound, none) ==
+    @test pending_loads(reg, mixed, [:f, :g, :h], unbound, unloaded, none) ==
           [LoadRequest(ID_X, :f, nothing), LoadRequest(ID_Y, :h, :h)]
+    sharing = registry_of([names_for(id, ["1.0.0"]; reexported = [:s], origin = ID_Z) for id in (ID_X, ID_Y)],
+                          Dict(ID_X => v"1.0.0", ID_Y => v"1.0.0"))
+    @test isempty(pending_loads(sharing, all_cfg, [:s], unbound, unloaded, none))
+    @test pending_loads(sharing, used_cfg, [:s], unbound, ==(ID_Y), none) == [LoadRequest(ID_Y, :s, :s)]
+    @test pending_loads(sharing, all_cfg, [:s], unbound, Returns(true), none) == [LoadRequest(ID_X, :s, nothing)]
+    # a package these requests load counts as loaded, whatever the order of the names
+    owning = registry_of([names_for(ID_X, ["1.0.0"], [:f]; reexported = [:s], origin = ID_Z),
+                          names_for(ID_Y, ["1.0.0"]; reexported = [:s], origin = ID_Z)], Dict(ID_X => v"1.0.0", ID_Y => v"1.0.0"))
+    @test pending_loads(owning, all_cfg, [:s, :f], unbound, unloaded, none) == [LoadRequest(ID_X, :f, nothing)]
+    @test pending_loads(owning, used_cfg, [:s, :f], unbound, unloaded, none) ==
+          [LoadRequest(ID_X, :f, :f), LoadRequest(ID_X, :s, :s)]
 end
 
 @testset "to_index" begin

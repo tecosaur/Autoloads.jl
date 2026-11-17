@@ -14,7 +14,7 @@ module AutoloadsPkgExt
 
 using Autoloads, Pkg, StyledStrings
 using Autoloads: PkgFailure, ManifestGraph, ConfigError, names_at, failed_at, autoload_names,
-    package_config, owner, ambiguities
+    package_config, owner
 
 # The face of each kind of name (`Autoloads.NAME_KINDS`, and `@` for macros), in the order About.jl lists them.
 const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funcall, ':' => :julia_type,
@@ -160,15 +160,18 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple)
     println(io, styled"\n{bold:Project autoloads}  {shadow:$(Base.contractuser(something(active, \"\")))}")
     print_packages(io, autoloads, [id for id in project_env.deps if cfg.project === nothing || id.name in cfg.project],
                    project_env.graph)
-    claimed = Dict{String, Vector{String}}()
-    for (name, ids) in ambiguities(registry)
-        push!(get!(claimed, join(sort!([id.name for id in ids]), ", "), String[]), String(name))
-    end
-    note = if isempty(claimed) "none" else "(not autoloaded)" end
-    println(io, styled"\n{bold:Ambiguous names}  {shadow:$note}")
-    for (claimants, names) in sort!(collect(claimed); by = first)
-        println(io, "  ", claimants, styled" {shadow:($(length(names)))}")
-        print_wrapped(io, sort!(names; by = lowercase))
+    for (title, note, claims) in (("Shared names", "autoloaded once one of their packages is loaded", registry.shared),
+                                  ("Ambiguous names", "not autoloaded", registry.ambiguous))
+        isempty(claims) && continue
+        println(io, styled"\n{bold:$title}  {shadow:($note)}")
+        claimed = Dict{String, Vector{String}}()
+        for (name, ids) in claims
+            push!(get!(claimed, join(sort!([id.name for id in ids]), ", "), String[]), String(name))
+        end
+        for (claimants, names) in sort!(collect(claimed); by = first)
+            println(io, "  ", claimants, styled" {shadow:($(length(names)))}")
+            print_wrapped(io, sort!(names; by = lowercase))
+        end
     end
     println(io, styled"\n{bold:Precompile policy}  $(lowercase(string(cfg.policy)))")
 end
@@ -200,13 +203,15 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple, pk
         end
         offered = by_kind(autoload_names(record, package_config(cfg, id.name)))
         print_names("Autoloads", "", [shown(name) for name in offered if owner(registry, name) == id])
-        contested = ambiguities(registry)
-        others(name) = join(sort!([other.name for other in contested[name] if other != id]), ", ")
-        print_names("Ambiguous", "not autoloaded",
-                    [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(contested, name)])
+        function claimed(title, note, claims)
+            others(name) = join(sort!([other.name for other in claims[name] if other != id]), ", ")
+            print_names(title, note, [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(claims, name)])
+        end
+        claimed("Shared", "autoloaded once one of their packages is loaded", registry.shared)
+        claimed("Ambiguous", "not autoloaded", registry.ambiguous)
         print_names("Re-exported", "loads the owner",
                     [shown(name) * styled" {shadow:($(owner(registry, name).name))}" for name in offered
-                     if !haskey(contested, name) && owner(registry, name) != id])
+                     if owner(registry, name) ∉ (id, nothing)])
         print_names("Excluded", "by the settings", map(shown, by_kind(setdiff(record.exported ∪ record.reexported, offered))))
         print_names("Public", "not autoloaded", map(shown, by_kind(record.public)))
     end

@@ -273,6 +273,14 @@ end
                 @test occursin("  Autoloads (3)\n    FixtureA, @fam, FA_CONST\n", status_text("FixtureA"))
                 styled = sprint(io -> Autoloads.status(io, "FixtureA"; kws...); context = :color => true)
                 @test occursin(r"\e\[[0-9;]+mFixtureA\e\[[0-9;]+m, \e\[[0-9;]+m@fam", styled)
+                origins = Dict(:shared_fn => Base.PkgId(Base.UUID(UInt128(1)), "Origin"))
+                write_catalog_changes!(catalog, Autoloads.CatalogRecord[
+                    PkgNames(id, [v"0.1.0"], Set([Symbol(id.name)]), Set{Symbol}(), Set([:shared_fn]); origins)
+                    for id in (FIXTURE_A, FIXTURE_C)])
+                @test occursin("Shared names  (autoloaded once one of their packages is loaded)\n  FixtureA, FixtureC (1)\n" *
+                               "    shared_fn\n", status_text())
+                @test occursin("  Shared (1)  autoloaded once one of their packages is loaded\n    shared_fn (FixtureC)\n",
+                               status_text("FixtureA"))
                 err = try status_text("FixtureA", "NotAPackage") catch err; err end
                 @test err isa ArgumentError && occursin("autoloads add NotAPackage", sprint(showerror, err))
             end

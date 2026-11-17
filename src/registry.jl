@@ -21,11 +21,13 @@ end
     Registry
 
 The names that may autoload: `owners` maps a name to the one package that
-provides it, `ambiguous` maps contested names to their claimants. Build with
-[`build_registry`](@ref).
+provides it, `shared` a name to the packages re-exporting it from one origin
+(it comes from whichever is loaded), and `ambiguous` contested names to their
+claimants. Build with [`build_registry`](@ref).
 """
 struct Registry
     owners::Dict{Symbol, Base.PkgId}
+    shared::Dict{Symbol, Vector{Base.PkgId}}
     ambiguous::Dict{Symbol, Vector{Base.PkgId}}
 end
 
@@ -127,60 +129,74 @@ end
 
 Index the names of each package in `autoload` (the record at its version,
 else its newest). A name owned by exactly one package goes to it; failing
-that, one re-exporter gets it; anything else is ambiguous.
+that, one re-exporter gets it, or several of the same known origin share it;
+anything else is ambiguous.
 """
 function build_registry(cat::Catalog, autoload::AbstractDict, cfg::Config)
     owning = Dict{Symbol, Vector{Base.PkgId}}()
     reexporting = Dict{Symbol, Vector{Base.PkgId}}()
+    records = Dict{Base.PkgId, PkgNames}()
     for (id, version) in sort!(collect(autoload); by = ((id, _),) -> (id.name, string(id.uuid)))
         record = something(names_at(cat, id, version), names_at(cat, id, nothing), Some(nothing))
         record === nothing && continue
+        records[id] = record
         for name in autoload_names(record, package_config(cfg, id.name))
             push!(get!(if name in record.exported owning else reexporting end, name, Base.PkgId[]), id)
         end
     end
     owners = Dict{Symbol, Base.PkgId}()
-    ambiguous = Dict{Symbol, Vector{Base.PkgId}}()
+    shared, ambiguous = Dict{Symbol, Vector{Base.PkgId}}(), Dict{Symbol, Vector{Base.PkgId}}()
     for name in keys(owning) ∪ keys(reexporting)
         claimants = get(() -> reexporting[name], owning, name)
+        origins = unique!([get(records[id].origins, name, nothing) for id in claimants])
         if length(claimants) == 1
             owners[name] = only(claimants)
+        elseif !haskey(owning, name) && length(origins) == 1 && only(origins) !== nothing
+            shared[name] = claimants
         else
             ambiguous[name] = claimants
         end
     end
-    Registry(owners, ambiguous)
+    Registry(owners, shared, ambiguous)
 end
 
 "The package that owns `name`, or `nothing`."
 owner(reg::Registry, name::Symbol) = get(reg.owners, name, nothing)
 
-"Whether `name` is owned by an autoload package."
-is_candidate(reg::Registry, name::Symbol) = haskey(reg.owners, name)
-
-"The contested names and their claimant packages."
-ambiguities(reg::Registry) = reg.ambiguous
+"Whether `name` is owned by an autoload package, or shared by several."
+is_candidate(reg::Registry, name::Symbol) = haskey(reg.owners, name) || haskey(reg.shared, name)
 
 """
-    pending_loads(reg, cfg, names, isbound, attempted) -> Vector{LoadRequest}
+    pending_loads(reg, cfg, names, isbound, isloaded, attempted) -> Vector{LoadRequest}
 
 Loads needed for the referenced `names`, skipping names for which
 `isbound(name)` holds and `(id, name)` pairs in `attempted` (`name` is
-`nothing` for whole-package loads). Packages in `AllBindings` mode yield one
-whole-package request; in `UsedBindings` mode one request per name.
+`nothing` for whole-package loads). A shared name is requested, after the
+others, from the first of its packages that is loaded (`isloaded(id)`) or
+about to be by these requests, and skipped if there is none. Packages in
+`AllBindings` mode yield one whole-package request; in `UsedBindings` mode
+one request per name.
 """
-function pending_loads(reg::Registry, cfg::Config, names, isbound::Function,
+function pending_loads(reg::Registry, cfg::Config, names, isbound::Function, isloaded::Function,
                        attempted::Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}})
     requests = LoadRequest[]
     queued = Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}()
-    for name in names
-        id = owner(reg, name)
-        (id === nothing || isbound(name)) && continue
+    function request!(id, name)
         target = if bindings_for(cfg, id.name) == UsedBindings name end
         key = (id, target)
-        (key in attempted || key in queued) && continue
+        (key in attempted || key in queued) && return
         push!(queued, key)
         push!(requests, LoadRequest(id, name, target))
+    end
+    unbound = [name for name in names if !isbound(name)]
+    for name in unbound
+        id = owner(reg, name)
+        id === nothing || request!(id, name)
+    end
+    for name in unbound
+        sharers = get(reg.shared, name, Base.PkgId[])
+        index = findfirst(id -> isloaded(id) || any(request -> request.id == id, requests), sharers)
+        index === nothing || request!(sharers[index], name)
     end
     requests
 end
