@@ -9,12 +9,13 @@
 const NAME_KINDS = ".+:="
 
 """
-    PkgNames(id, versions, exported, public, reexported, kinds = Dict())
+    PkgNames(id, versions, exported, public, reexported; kinds = Dict(), origins = Dict())
 
 One namespace offered by package `id`, and the exact sorted `versions`
 offering it (empty for built-in modules). `exported` always includes the
-module's own name. `kinds` maps names other than macros to one of
-[`NAME_KINDS`](@ref), where known. Records for one `id` have disjoint `versions`.
+module's own name. Where known, `kinds` maps names other than macros to one
+of [`NAME_KINDS`](@ref), and `origins` re-exported names to the package
+owning them. Records for one `id` have disjoint `versions`.
 """
 struct PkgNames
     id::Base.PkgId
@@ -23,10 +24,11 @@ struct PkgNames
     public::Set{Symbol}
     reexported::Set{Symbol}
     kinds::Dict{Symbol, Char}
+    origins::Dict{Symbol, Base.PkgId}
 end
 
-PkgNames(id, versions, exported, public, reexported) =
-    PkgNames(id, versions, exported, public, reexported, Dict{Symbol, Char}())
+PkgNames(id, versions, exported, public, reexported; kinds = Dict{Symbol, Char}(), origins = Dict{Symbol, Base.PkgId}()) =
+    PkgNames(id, versions, exported, public, reexported, kinds, origins)
 
 """
     PkgFailure(id, version, message)
@@ -51,7 +53,7 @@ Base.:(==)(a::PkgFailure, b::PkgFailure) =
     a.id == b.id && a.version == b.version && a.message == b.message
 
 Base.hash(r::PkgNames, h::UInt) =
-    hash((r.id, r.versions, r.exported, r.public, r.reexported, r.kinds), hash(:PkgNames, h))
+    hash((r.id, r.versions, r.exported, r.public, r.reexported, r.kinds, r.origins), hash(:PkgNames, h))
 
 Base.hash(r::PkgFailure, h::UInt) =
     hash((r.id, r.version, r.message), hash(:PkgFailure, h))
@@ -75,6 +77,7 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
     public = Set{Symbol}()
     reexported = Set{Symbol}()
     kinds = Dict{Symbol, Char}(nameof(mod) => '.')
+    origins = Dict{Symbol, Base.PkgId}()
     for name in names(mod)
         isdefined(mod, name) && !any(isspace, string(name)) || continue
         owner = Base.binding_module(mod, name)
@@ -84,6 +87,7 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
             push!(if is_exported exported else public end, name)
         elseif is_exported && !is_core
             push!(reexported, name)
+            origins[name] = Base.PkgId(Base.moduleroot(owner))
         else
             continue
         end
@@ -92,7 +96,7 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
         kinds[name] = if value isa Module '.' elseif value isa Function '+' elseif value isa Type ':' else '=' end
     end
     version = pkgversion(mod)
-    PkgNames(id, if version === nothing VersionNumber[] else [version] end, exported, public, reexported, kinds)
+    PkgNames(id, if version === nothing VersionNumber[] else [version] end, exported, public, reexported, kinds, origins)
 end
 
 """
@@ -119,7 +123,8 @@ merge_observation(existing::Vector{CatalogRecord}, new::PkgFailure) = merge_sing
     catalog_line(record) -> String
 
 Serialise `record` to one tab-separated line, the inverse of
-[`parse_catalog_line`](@ref). Each name but a macro's follows its kind (`?` if unknown).
+[`parse_catalog_line`](@ref). Each name but a macro's follows its kind (`?` if
+unknown); re-exported names follow a `/uuid/Name` token for their origin.
 
 # Raises
 `ArgumentError` if the id has no UUID or any name contains whitespace, since
@@ -128,7 +133,7 @@ the line could not be parsed back.
 function catalog_line(record::PkgNames)
     versions = if isempty(record.versions) "-" else join(record.versions, ',') end
     join((id_fields(record.id)..., versions, "ok",
-          (name_list(names, record.kinds) for names in (record.exported, record.public, record.reexported))...), '\t')
+          name_list(record.exported, record.kinds), name_list(record.public, record.kinds), reexport_list(record)), '\t')
 end
 
 function catalog_line(record::PkgFailure)
@@ -151,14 +156,26 @@ function parse_catalog_line(line::AbstractString)
     if fields[4] == "ok" && length(fields) == 7
         versions = parse_versions(fields[3])
         versions === nothing && return nothing
-        tokens = [split(field, ' '; keepempty = false) for field in fields[5:7]]
         is_macro(token) = startswith(token, '@')
-        all(token -> is_macro(token) || (length(token) > 1 && first(token) in NAME_KINDS * '?'),
-            Iterators.flatten(tokens)) || return nothing
+        is_name(token) = is_macro(token) || (length(token) > 1 && first(token) in NAME_KINDS * '?')
         name(token) = Symbol(if is_macro(token) token else token[2:end] end)
+        tokens = [split(field, ' '; keepempty = false) for field in fields[5:7]]
+        origins, origin = Dict{Symbol, Base.PkgId}(), nothing
+        for token in tokens[3]
+            if startswith(token, '/')
+                parts = split(token, '/')
+                length(parts) == 3 || return nothing
+                uuid = if !isempty(parts[2]) @something(tryparse(Base.UUID, parts[2]), return nothing) end
+                origin = Base.PkgId(uuid, String(parts[3]))
+            elseif origin !== nothing && is_name(token)
+                origins[name(token)] = origin
+            end
+        end
+        filter!(token -> !startswith(token, '/'), tokens[3])
+        all(is_name, Iterators.flatten(tokens)) || return nothing
         kinds = Dict{Symbol, Char}(name(token) => first(token) for token in Iterators.flatten(tokens)
                                    if first(token) in NAME_KINDS)
-        PkgNames(id, versions, (Set{Symbol}(name(token) for token in field) for field in tokens)..., kinds)
+        PkgNames(id, versions, (Set{Symbol}(name(token) for token in field) for field in tokens)..., kinds, origins)
     elseif fields[4] == "failed"
         version = tryparse(VersionNumber, fields[3])
         version === nothing && fields[3] != "-" && return nothing
@@ -188,10 +205,11 @@ function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
 end
 
 same_namespace(a::PkgNames, b::PkgNames) =
-    a.exported == b.exported && a.public == b.public && a.reexported == b.reexported && a.kinds == b.kinds
+    a.exported == b.exported && a.public == b.public && a.reexported == b.reexported && a.kinds == b.kinds &&
+    a.origins == b.origins
 
 with_versions(record::PkgNames, versions::Vector{VersionNumber}) =
-    PkgNames(record.id, versions, record.exported, record.public, record.reexported, record.kinds)
+    PkgNames(record.id, versions, record.exported, record.public, record.reexported, record.kinds, record.origins)
 
 same_claim(a::PkgNames, b::PkgNames) = same_namespace(a, b)
 same_claim(a::PkgFailure, b::PkgFailure) = a.message == b.message
@@ -233,6 +251,20 @@ function name_list(names::Set{Symbol}, kinds::Dict{Symbol, Char})
     any(s -> any(isspace, s), strings) &&
         throw(ArgumentError("cannot write catalog line: names $(filter(s -> any(isspace, s), strings)) contain whitespace"))
     join((if startswith(name, '@') name else get(kinds, Symbol(name), '?') * name end for name in strings), ' ')
+end
+
+"The re-exported names of `record`, those of known origin after a `/uuid/Name` token for it."
+function reexport_list(record::PkgNames)
+    by_origin = Dict{Union{Base.PkgId, Nothing}, Set{Symbol}}()
+    for name in record.reexported
+        push!(get!(by_origin, get(record.origins, name, nothing), Set{Symbol}()), name)
+    end
+    parts = String[]
+    for origin in sort!(collect(keys(by_origin)); by = origin -> if origin === nothing "" else origin.name end)
+        origin === nothing || push!(parts, "/$(something(origin.uuid, ""))/$(origin.name)")
+        push!(parts, name_list(by_origin[origin], record.kinds))
+    end
+    join(parts, ' ')
 end
 
 function parse_versions(field::AbstractString)

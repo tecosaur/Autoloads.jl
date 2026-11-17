@@ -269,7 +269,7 @@ end
                 @test occursin("    @fam, FA_CONST,\n    FixtureA\n", narrow)
                 kinds = Dict(:FixtureA => '.', :fa => '+', :FA_CONST => '=')
                 write_catalog_changes!(catalog, Autoloads.CatalogRecord[
-                    PkgNames(FIXTURE_A, [v"0.1.0"], Set([keys(kinds)..., Symbol("@fam")]), Set([:fa_public]), Set{Symbol}(), kinds)])
+                    PkgNames(FIXTURE_A, [v"0.1.0"], Set([keys(kinds)..., Symbol("@fam")]), Set([:fa_public]), Set{Symbol}(); kinds)])
                 @test occursin("  Autoloads (3)\n    FixtureA, @fam, FA_CONST\n", status_text("FixtureA"))
                 styled = sprint(io -> Autoloads.status(io, "FixtureA"; kws...); context = :color => true)
                 @test occursin(r"\e\[[0-9;]+mFixtureA\e\[[0-9;]+m, \e\[[0-9;]+m@fam", styled)

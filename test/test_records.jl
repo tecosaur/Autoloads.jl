@@ -29,6 +29,7 @@ failure_record(version, message = "boom") = PkgFailure(ID_A, VersionNumber(versi
     @test r.reexported == Set([:base64encode])
     @test r.kinds == Dict(:ExtractFixture => '.', :Inner => '.', :f => '+', :g => '+', :p => '+', :base64encode => '+',
                           :T => ':', :x => '=')
+    @test r.origins == Dict(:base64encode => Base.PkgId(ExtractFixture.Base64))
     t = extract_names(Base.Threads, Base.PkgId(nothing, "Base.Threads"))
     @test Symbol("@spawn") in t.exported && :nthreads in t.exported && isempty(t.versions)
     @test :Threads in t.exported
@@ -103,7 +104,9 @@ function random_record(rng)
         sets = (random_symbols(rng), random_symbols(rng), random_symbols(rng))
         kinds = Dict{Symbol, Char}(name => rand(rng, ".+:=") for names in sets for name in names
                                    if rand(rng, Bool) && !startswith(String(name), '@'))
-        PkgNames(id, random_versions(rng), sets..., kinds)
+        origins = Dict{Symbol, Base.PkgId}(name => Base.PkgId(rand(rng, (nothing, UUID_A)), rand(rng, ("Base", "Origin")))
+                                           for name in sets[3] if rand(rng, Bool))
+        PkgNames(id, random_versions(rng), sets...; kinds, origins)
     end
 end
 
@@ -116,9 +119,10 @@ end
     @testset "format" begin
         line = catalog_line(names_record(["1.0.0", "2.0.0"], [:g, :f], [:p], Symbol[]))
         @test line == "$UUID_A\tA\t1.0.0,2.0.0\tok\t?f ?g\t?p\t"
-        kinded = PkgNames(ID_A, [v"1.0.0"], Set([:A, :f, Symbol("@m")]), Set([:T]), Set([:x]),
-                          Dict(:A => '.', :f => '+', :T => ':', :x => '='))
-        @test catalog_line(kinded) == "$UUID_A\tA\t1.0.0\tok\t@m .A +f\t:T\t=x"
+        kinded = PkgNames(ID_A, [v"1.0.0"], Set([:A, :f, Symbol("@m")]), Set([:T]), Set([:x, :y, :z]);
+                          kinds = Dict(:A => '.', :f => '+', :T => ':', :x => '='),
+                          origins = Dict(:y => Base.PkgId(UUID_A, "Origin"), :z => Base.PkgId(nothing, "Base")))
+        @test catalog_line(kinded) == "$UUID_A\tA\t1.0.0\tok\t@m .A +f\t:T\t=x //Base ?z /$UUID_A/Origin ?y"
         @test catalog_line(names_record(String[])) == "$UUID_A\tA\t-\tok\t\t\t"
         @test catalog_line(failure_record("1.0.0", "a\\b\nc")) == "$UUID_A\tA\t1.0.0\tfailed\ta\\\\b\\nc"
     end
@@ -145,6 +149,8 @@ end
         "$UUID_A\tA\t1.0.0\tok\tf g\tp\t",
         "$UUID_A\tA\t1.0.0\tok\tff\t?p\t",
         "$UUID_A\tA\t1.0.0\tok\t+f\t?\t",
+        "$UUID_A\tA\t1.0.0\tok\t+f\t?p\t/Origin +g",
+        "$UUID_A\tA\t1.0.0\tok\t+f\t?p\t/not-a-uuid/Origin +g",
     )
         @test parse_catalog_line(line) === nothing
     end
