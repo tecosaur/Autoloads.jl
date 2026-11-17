@@ -13,12 +13,12 @@ layout is not as expected. Also renders `Autoloads.status` (`print_status`).
 module AutoloadsPkgExt
 
 using Autoloads, Pkg, StyledStrings
-using Autoloads: PkgFailure, ManifestGraph, ConfigError, NAME_KINDS, names_at, failed_at, autoload_names,
+using Autoloads: PkgFailure, ManifestGraph, ConfigError, names_at, failed_at, autoload_names,
     package_config, owner, ambiguities
 
-# The face of each of `Autoloads.NAME_KINDS`, as About.jl shows names.
-const KIND_FACES = Dict('m' => :bright_red, '@' => :julia_macro, 'f' => :julia_funcall, 't' => :julia_type,
-                        'v' => :julia_identifier)
+# The face of each kind of name (`Autoloads.NAME_KINDS`, and `@` for macros), in the order About.jl lists them.
+const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funcall, ':' => :julia_type,
+                    '=' => :julia_identifier]
 
 # `nothing` without a REPL mode; then every use below fails soft.
 const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
@@ -187,10 +187,12 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple, pk
         println(io, glyph, styled" {bold:$(id.name)}", if version === nothing "" else styled" {shadow:v$version}" end, "  ", state)
         record = names_at(cat, id, version)
         record === nothing && continue
-        kind(name) = get(record.kinds, name, '?')
-        shown(name) = styled"{code,$(get(KIND_FACES, kind(name), :default)):$name}"
-        by_kind(names) = sort!(collect(names); by = name -> (something(findfirst(kind(name), NAME_KINDS), typemax(Int)),
-                                                             lowercase(String(name))))
+        rank(name) = findfirst(==(if startswith(String(name), '@') '@' else get(record.kinds, name, '?') end) ∘ first, KIND_FACES)
+        function shown(name)
+            face = last(get(KIND_FACES, something(rank(name), 0), '?' => :default))
+            styled"{code,$face:$name}"
+        end
+        by_kind(names) = sort!(collect(names); by = name -> (something(rank(name), typemax(Int)), lowercase(String(name))))
         function print_names(title, note, names)
             isempty(names) && return
             println(io, styled"\n  {bold:$title} ($(length(names)))", if isempty(note) "" else styled"  {shadow:$note}" end)

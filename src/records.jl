@@ -5,16 +5,16 @@
 # namespace, and their line-oriented serialisation. Depends only on Base so
 # that the standalone indexer script can include it.
 
-# What a name is bound to: a module, macro, function, type or other value.
-const NAME_KINDS = "m@ftv"
+# What a name is bound to: a module, function, type or other value. A macro's name says as much.
+const NAME_KINDS = ".+:="
 
 """
     PkgNames(id, versions, exported, public, reexported, kinds = Dict())
 
 One namespace offered by package `id`, and the exact sorted `versions`
 offering it (empty for built-in modules). `exported` always includes the
-module's own name. `kinds` maps names to one of [`NAME_KINDS`](@ref), where
-known. Records for one `id` have disjoint `versions`.
+module's own name. `kinds` maps names other than macros to one of
+[`NAME_KINDS`](@ref), where known. Records for one `id` have disjoint `versions`.
 """
 struct PkgNames
     id::Base.PkgId
@@ -74,7 +74,7 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
     exported = Set{Symbol}((nameof(mod),))
     public = Set{Symbol}()
     reexported = Set{Symbol}()
-    kinds = Dict{Symbol, Char}(nameof(mod) => 'm')
+    kinds = Dict{Symbol, Char}(nameof(mod) => '.')
     for name in names(mod)
         isdefined(mod, name) && !any(isspace, string(name)) || continue
         owner = Base.binding_module(mod, name)
@@ -87,9 +87,9 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
         else
             continue
         end
+        startswith(string(name), '@') && continue
         value = getglobal(mod, name)
-        kinds[name] = if value isa Module 'm' elseif startswith(string(name), '@') '@' elseif value isa Function 'f'
-        elseif value isa Type 't' else 'v' end
+        kinds[name] = if value isa Module '.' elseif value isa Function '+' elseif value isa Type ':' else '=' end
     end
     version = pkgversion(mod)
     PkgNames(id, if version === nothing VersionNumber[] else [version] end, exported, public, reexported, kinds)
@@ -119,7 +119,7 @@ merge_observation(existing::Vector{CatalogRecord}, new::PkgFailure) = merge_sing
     catalog_line(record) -> String
 
 Serialise `record` to one tab-separated line, the inverse of
-[`parse_catalog_line`](@ref). Each name follows its kind (`?` if unknown).
+[`parse_catalog_line`](@ref). Each name but a macro's follows its kind (`?` if unknown).
 
 # Raises
 `ArgumentError` if the id has no UUID or any name contains whitespace, since
@@ -152,10 +152,13 @@ function parse_catalog_line(line::AbstractString)
         versions = parse_versions(fields[3])
         versions === nothing && return nothing
         tokens = [split(field, ' '; keepempty = false) for field in fields[5:7]]
-        all(token -> length(token) > 1 && first(token) in NAME_KINDS * '?', Iterators.flatten(tokens)) || return nothing
-        kinds = Dict{Symbol, Char}(Symbol(token[2:end]) => first(token) for token in Iterators.flatten(tokens)
-                                   if first(token) != '?')
-        PkgNames(id, versions, (Set{Symbol}(Symbol(token[2:end]) for token in field) for field in tokens)..., kinds)
+        is_macro(token) = startswith(token, '@')
+        all(token -> is_macro(token) || (length(token) > 1 && first(token) in NAME_KINDS * '?'),
+            Iterators.flatten(tokens)) || return nothing
+        name(token) = Symbol(if is_macro(token) token else token[2:end] end)
+        kinds = Dict{Symbol, Char}(name(token) => first(token) for token in Iterators.flatten(tokens)
+                                   if first(token) in NAME_KINDS)
+        PkgNames(id, versions, (Set{Symbol}(name(token) for token in field) for field in tokens)..., kinds)
     elseif fields[4] == "failed"
         version = tryparse(VersionNumber, fields[3])
         version === nothing && fields[3] != "-" && return nothing
@@ -229,7 +232,7 @@ function name_list(names::Set{Symbol}, kinds::Dict{Symbol, Char})
     strings = sort!(string.(names))
     any(s -> any(isspace, s), strings) &&
         throw(ArgumentError("cannot write catalog line: names $(filter(s -> any(isspace, s), strings)) contain whitespace"))
-    join((get(kinds, Symbol(name), '?') * name for name in strings), ' ')
+    join((if startswith(name, '@') name else get(kinds, Symbol(name), '?') * name end for name in strings), ' ')
 end
 
 function parse_versions(field::AbstractString)
