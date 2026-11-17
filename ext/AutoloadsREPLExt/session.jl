@@ -9,6 +9,7 @@
 
 const MISSING_FILE_STAMP = (0.0, Int64(0), UInt64(0))
 const STOP_WAIT_S = 2.0
+const FIRST_REFRESH_WAIT_S = 2.0
 
 """
     Session(catalog, registry, config, member, member_deps)
@@ -68,10 +69,11 @@ mutable struct Runtime
     has_reported_transform_failure::Bool
     has_reported_prepare_failure::Bool
     @atomic is_stopping::Bool
+    @atomic has_refreshed::Bool
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractString) =
-    Runtime(events, String(member), String(catalog_path), Base.Event(), nothing, false, false, false)
+    Runtime(events, String(member), String(catalog_path), Base.Event(), nothing, false, false, false, false)
 
 """
     WorkerStart(runtime, repl = nothing)
@@ -275,6 +277,8 @@ function handle_batch!(worker::Worker, batch::Vector{Event})
     catch err
         is_unreported!(worker.reported_refresh_errors, err) &&
             @error "Autoloads failed to update its session" exception = (err, catch_backtrace())
+    finally
+        @atomic worker.runtime.has_refreshed = true
     end
     nothing
 end
@@ -422,9 +426,17 @@ function transform_input(runtime::Runtime, ex)
         is_same_environment || forget_failures!(LOAD)
         put!(runtime.events, Refresh())
     end
+    previous === nothing && await_first_refresh(runtime)
     session = @atomic SESSION.session
     if session === nothing ex else transform_statements(session, ex) end
 end
+
+"""
+Wait, up to `timeout_s`, for the worker's first refresh: an input typed ahead
+of the prompt would otherwise pass before there is a session.
+"""
+await_first_refresh(runtime::Runtime, timeout_s = FIRST_REFRESH_WAIT_S) =
+    timedwait(() -> (@atomic runtime.has_refreshed), timeout_s; pollint = 0.005)
 
 """
 Route each statement of `ex` per [`repl_transform`](@ref). Pure, but for the

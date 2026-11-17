@@ -33,8 +33,7 @@ include("complete.jl")
 
 function __init__()
     isinteractive() || return
-    # Loaded before the REPL is up (the latch was loaded early), the worker
-    # still starts at the first prompt, so as not to slow the REPL's start.
+    # Before the REPL is up, the worker waits for its first prompt.
     is_repl_running = isdefined(Base, :active_repl)
     runtime = start_session!(; is_deferred = !is_repl_running)
     if !is_repl_running
@@ -60,9 +59,8 @@ function install_transform()
     nothing
 end
 
-# Precompile workload: what inputs and the session worker's first refresh run.
-# Code inferred while tagged is kept in the image even when reached by dynamic
-# dispatch (as PrecompileTools does), so settings and TOML handling are cached.
+# Precompile workload: what inputs and the worker's first refresh run. Tagged as
+# PrecompileTools does, to also cache what is dispatched to dynamically.
 if ccall(:jl_generating_output, Cint, ()) == 1
     ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
     try
@@ -86,7 +84,11 @@ if ccall(:jl_generating_output, Cint, ()) == 1
                                      CompletionWrapper{REPL.REPLCompletionProvider}, LineEdit.PromptState, Module))
             precompile(Tuple{ObserveLoad, Base.PkgId})
             precompile(repl_transform, (Expr,))
-            transform_input(Runtime(Channel{Event}(Inf), "", ""), :(1))
+            let runtime = Runtime(Channel{Event}(Inf), "", "")
+                await_first_refresh(runtime, 0)
+                @atomic runtime.has_refreshed = true
+                transform_input(runtime, :(1))
+            end
             precompile(Worker, (Runtime, Indexer))
             precompile(run_worker, (Worker,))
             precompile(launch_and_supervise, (Cmd, String, String, Vector{Pair{Base.PkgId, Union{VersionNumber, Nothing}}}, Int, Set{String}))
