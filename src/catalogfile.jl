@@ -1,14 +1,16 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# The on-disk catalog: one record per line. Reads take no lock and skip torn
-# lines; the session worker's reads and all writes remove them. Writes are
+# The on-disk catalog: a header line naming the format, then one record per
+# line. Reads take no lock and skip torn lines, and every line of a file with
+# another header; the session worker's reads and all writes remove them. Writes are
 # rare, serialised by a pidfile lock, and never lose another process's write.
 # Depends only on Base (plus FileWatching, required lazily) so that the
 # standalone indexer script can include it after `records.jl`.
 
 const FILEWATCHING_ID = Base.PkgId(Base.UUID("7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"), "FileWatching")
 const LOCK_STALE_AGE_S = 60
+const CATALOG_HEADER = "Autoloads catalog v1"
 
 """
     read_catalog(path) -> Vector{CatalogRecord}
@@ -36,7 +38,7 @@ function read_healed_catalog(path::AbstractString)
             locked_records, locked_malformed = parse_catalog_file(path)
             if locked_malformed > 0
                 rewrite_catalog(path, group_by_id(locked_records))
-                @warn "Removed $locked_malformed malformed catalog lines" path
+                @warn "Removed $locked_malformed catalog lines that were malformed or of another format" path
             end
             locked_records
         end
@@ -79,7 +81,7 @@ function write_catalog_changes!(path::AbstractString, observations::Vector{Catal
         isempty(changed) && malformed == 0 && return false
         if malformed > 0 || any(in(keys(file_records)), changed)
             rewrite_catalog(path, merged)
-            malformed > 0 && @warn "Removed $malformed malformed catalog lines" path
+            malformed > 0 && @warn "Removed $malformed catalog lines that were malformed or of another format" path
         else
             append_catalog(path, [r for id in changed for r in merged[id]])
         end
@@ -107,14 +109,19 @@ end
 
 # ── Helpers ──
 
-"The records in `path` (none if it is missing) and the number of malformed lines."
+"""
+The records in `path` (none if it is missing) and the number of malformed
+lines: all of them when the file does not start with [`CATALOG_HEADER`](@ref).
+"""
 function parse_catalog_file(path::AbstractString)
     records = CatalogRecord[]
     malformed = 0
     isfile(path) || return records, malformed
-    for line in eachline(path)
+    has_header = false
+    for (i, line) in enumerate(eachline(path))
+        i == 1 && (has_header = line == CATALOG_HEADER) && continue
         isempty(line) && continue
-        record = parse_catalog_line(line)
+        record = if has_header parse_catalog_line(line) end
         if record === nothing
             malformed += 1
         else
@@ -136,6 +143,7 @@ function append_catalog(path, records)
     try
         is_torn = filesize(path) > 0 && open(io -> (seekend(io); skip(io, -1); read(io, UInt8)), path) != UInt8('\n')
         is_torn && write(file, "\n")
+        filesize(path) == 0 && write(file, CATALOG_HEADER * "\n")
         foreach(line -> write(file, line), lines)
     finally
         close(file)
@@ -147,7 +155,7 @@ function rewrite_catalog(path, groups)
     lines = sort!([catalog_line(r) for records in values(groups) for r in records])
     tmp = path * ".tmp-$(getpid())"
     try
-        write(tmp, join(lines, '\n') * '\n')
+        write(tmp, join([CATALOG_HEADER; lines], '\n') * '\n')
         mv(tmp, path; force = true)
     catch
         rm(tmp; force = true)

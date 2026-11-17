@@ -1,12 +1,13 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-using Test
+using Test, Autoloads
 using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog,
     clear_failures!, read_healed_catalog
 
 const CATALOG_UUID_A = Base.UUID("00000000-0000-0000-0000-0000000000b1")
 const CATALOG_UUID_B = Base.UUID("00000000-0000-0000-0000-0000000000b2")
+const HEADER = Autoloads.CATALOG_HEADER * "\n"
 
 catalog_names(uuid, name, version, exported...) =
     PkgNames(Base.PkgId(uuid, name), [version], Set(Symbol.(exported)), Set{Symbol}(), Set{Symbol}())
@@ -85,9 +86,9 @@ catalog_names(uuid, name, version, exported...) =
             path = joinpath(dir, "catalog")
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(good)
-            write(path, line * "\n" * line[1:end-12])
+            write(path, HEADER * line * "\n" * line[1:end-12])
             b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
-            @test (@test_logs (:warn, r"Removed 1 malformed") write_catalog_changes!(path, CatalogRecord[b1]))
+            @test (@test_logs (:warn, r"Removed 1 catalog line") write_catalog_changes!(path, CatalogRecord[b1]))
             records = @test_logs read_catalog(path)
             @test sort(records; by = r -> r.id.name) == [good, b1]
         end
@@ -108,19 +109,34 @@ catalog_names(uuid, name, version, exported...) =
         end
     end
 
+    @testset "another format" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog")
+            good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            for header in ("", "Autoloads catalog v0\n")
+                write(path, header * catalog_line(good) * "\n")
+                @test isempty(@test_logs read_catalog(path))
+                @test isempty(@test_logs (:warn, r"Removed \d catalog line") read_healed_catalog(path))
+                @test read(path, String) == HEADER
+                @test write_catalog_changes!(path, CatalogRecord[good])
+                @test read_catalog(path) == [good] && startswith(read(path, String), HEADER)
+            end
+        end
+    end
+
     @testset "torn catalog" begin
         mktempdir() do dir
             path = joinpath(dir, "catalog")
             good = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
             line = catalog_line(catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B, :h))
-            write(path, catalog_line(good) * "\n" * line[1:end-12])
+            write(path, HEADER * catalog_line(good) * "\n" * line[1:end-12])
             @test (@test_logs read_catalog(path)) == [good]
-            records = @test_logs (:warn, r"Removed 1 malformed") read_healed_catalog(path)
+            records = @test_logs (:warn, r"Removed 1 catalog line") read_healed_catalog(path)
             @test records == [good]
             @test (@test_logs read_healed_catalog(path)) == [good]
             @test !write_catalog_changes!(path, CatalogRecord[good])
             # In a read-only directory the lines stay, and the warning is not repeated.
-            write(path, catalog_line(good) * "\n" * line[1:end-12])
+            write(path, HEADER * catalog_line(good) * "\n" * line[1:end-12])
             chmod(dir, 0o555)
             try
                 logger = Test.TestLogger(; respect_maxlog = true)
