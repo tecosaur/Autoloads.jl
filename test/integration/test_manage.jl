@@ -257,6 +257,7 @@ end
             @test endswith(text, "Precompile policy  background\n")
             styled = sprint(io -> Autoloads.status(io; kws...); context = :color => true)
             @test occursin("\e[1mGlobal autoloads\e[22m", styled) && occursin("\e[32m✓\e[39m", styled)
+            @test occursin("\e[34m4\e[39m exports, \e[35m1\e[39m public", styled)
             @testset "of a package" begin
                 text = status_text("FixtureA", "Statistics")
                 @test startswith(text, "✓ FixtureA v0.1.0  4 exports, 1 public\n")

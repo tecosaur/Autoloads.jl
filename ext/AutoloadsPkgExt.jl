@@ -256,9 +256,9 @@ index_cells(failure::PkgFailure, widths) =
 
 function index_cells((exports, public)::NTuple{2, Int}, (exports_width, public_width))
     noun = if exports == 1 "export" else "exports" end
-    counts = string(lpad(exports, exports_width), ' ', noun)
+    counts = styled"{blue:$(lpad(exports, exports_width))} $noun"
     styled"{success:✓}", if public == 0 counts else
-        string(counts, rpad(",", 9 - length(noun)), lpad(public, public_width), " public")
+        counts * rpad(",", 9 - length(noun)) * styled"{magenta:$(lpad(public, public_width))} public"
     end
 end
 
