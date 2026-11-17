@@ -26,7 +26,7 @@ end
     Config(stdlib, project, policy, bindings, log, up_hook, packages)
 
 Typed autoload settings. `project === nothing` means every direct dependency
-of the project; an empty set means none. `log` is whether each autoload is
+of the project (and the project itself, when a package); an empty set means none. `log` is whether each autoload is
 announced, `up_hook` whether `pkg> up` in the global environment also updates the
 autoload packages. `packages` maps package names to their [`PackageConfig`](@ref).
 """

@@ -107,11 +107,19 @@ end
     environment(project_file) -> (; deps::Vector{Base.PkgId}, graph::ManifestGraph)
 
 The direct deps and manifest graph of `project_file`; empty for `nothing` or a
-missing file.
+missing file. A package project (one with a `name` and `uuid`) counts among
+its own deps, at its own `version`.
 """
 function environment(project_file::Union{String, Nothing})
-    project_file === nothing && return (deps = Base.PkgId[], graph = ManifestGraph())
-    (deps = project_deps(project_file), graph = manifest_graph(project_file))
+    (project_file === nothing || !isfile(project_file)) && return (deps = Base.PkgId[], graph = ManifestGraph())
+    deps, graph = project_deps(project_file), manifest_graph(project_file)
+    project = Base.parsed_toml(project_file)
+    if haskey(project, "name") && haskey(project, "uuid")
+        uuid = Base.UUID(project["uuid"]::String)
+        graph.versions[uuid] = if haskey(project, "version") VersionNumber(project["version"]::String) end
+        push!(deps, Base.PkgId(uuid, project["name"]::String))
+    end
+    (; deps, graph)
 end
 
 """

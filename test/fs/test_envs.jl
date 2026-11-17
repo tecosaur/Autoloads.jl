@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 using Test
-using Autoloads: member_dir, catalog_path, project_deps, manifest_graph, dependency_closure,
+using Autoloads: member_dir, catalog_path, project_deps, manifest_graph, environment, dependency_closure,
     stdlib_ids, builtin_records, run_julia, notify_env_change, ENV_CHANGED, load_config,
     Config
 
@@ -10,6 +10,7 @@ const UUID_PKG = Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f")
 const UUID_DATES = Base.UUID("ade2ca70-3891-5945-98fb-dc099432e06a")
 const UUID_X = Base.UUID("00000000-0000-0000-0000-0000000000a1")
 const UUID_Y = Base.UUID("00000000-0000-0000-0000-0000000000a2")
+const UUID_SELF = Base.UUID("00000000-0000-0000-0000-0000000000a3")
 
 write_file(path, text) = (mkpath(dirname(path)); write(path, text); path)
 
@@ -104,6 +105,29 @@ end
         @test g.versions[UUID_X] == v"2.0.0"
         @test g.deps[UUID_Y] == [UUID_X]
         @test g.deps[UUID_X] == Base.UUID[]
+    end
+end
+
+@testset "environment" begin
+    mktempdir() do root
+        workspace_fixture(root)
+        project = joinpath(root, "Project.toml")
+        env = environment(project)
+        @test env.deps == [Base.PkgId(UUID_X, "X")]
+        @test env.graph.versions[UUID_X] == v"1.2.3"
+        self = "name = \"Self\"\nuuid = \"$UUID_SELF\"\n"
+        write_file(project, self * "version = \"0.3.1\"\n[deps]\nX = \"$UUID_X\"\n")
+        env = environment(project)
+        @test env.deps == [Base.PkgId(UUID_X, "X"), Base.PkgId(UUID_SELF, "Self")]
+        @test env.graph.versions[UUID_SELF] == v"0.3.1"
+        write_file(project, self)
+        env = environment(project)
+        @test env.deps == [Base.PkgId(UUID_SELF, "Self")]
+        @test env.graph.versions[UUID_SELF] === nothing
+        write_file(project, "name = \"Self\"\n")
+        @test isempty(environment(project).deps)
+        @test isempty(environment(joinpath(root, "nonexistent", "Project.toml")).deps)
+        @test isempty(environment(nothing).deps)
     end
 end
 

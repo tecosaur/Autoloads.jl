@@ -41,8 +41,9 @@ sum (generic function with 10 methods)
 #+end_src
 
 Autoloads only acts on names that are undefined and not locally bound. If the
-active project provides an autoload package, it is loaded from there. Indexing
-and precompilation happen in the background.
+active project provides an autoload package, it is loaded from there. The
+active project's dependencies autoload too, as does the project itself when
+it is a package. Indexing and precompilation happen in the background.
 
 A name that several autoload packages provide is not autoloaded, unless they
 all re-export it from one package (as ~fit~ from StatsAPI, by both StatsBase
