@@ -54,17 +54,15 @@ const EnvStamp = @NamedTuple{active::Union{String, Nothing}, environment::NTuple
 """
     Runtime(events, member, catalog_path)
 
-One session's fixed parts: the worker's event channel and start event, the
-autoloads `member` directory and the catalog file. `stamp` (the environment
-files as last seen by the transform) and the failure flags belong to the REPL
-backend task; once `is_stopping` is set (at exit), the worker handles no more
-batches.
+One session's fixed parts: the worker's event channel, the autoloads `member`
+directory and the catalog file. `stamp` (the environment files as last seen
+by the transform) and the failure flags belong to the REPL backend task;
+once `is_stopping` is set (at exit), the worker handles no more batches.
 """
 mutable struct Runtime
     const events::Channel{Event}
     const member::String
     const catalog_path::String
-    const worker_start::Base.Event
     stamp::Union{EnvStamp, Nothing}
     has_reported_transform_failure::Bool
     has_reported_prepare_failure::Bool
@@ -73,32 +71,7 @@ mutable struct Runtime
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalog_path::AbstractString) =
-    Runtime(events, String(member), String(catalog_path), Base.Event(), nothing, false, false, false, false)
-
-"""
-    WorkerStart(runtime, repl = nothing)
-
-Starts `runtime`'s deferred worker: from a `Timer`, once `repl` (if any) is
-at its first prompt; from `atreplinit`, by polling a line-editing REPL for
-that prompt, which comes after every other `atreplinit` hook has run.
-"""
-struct WorkerStart <: Function
-    runtime::Runtime
-    repl::Union{REPL.LineEditREPL, Nothing}
-end
-
-WorkerStart(runtime::Runtime) = WorkerStart(runtime, nothing)
-
-function (start::WorkerStart)(timer::Timer)
-    (; repl) = start
-    repl === nothing || !hasfield(REPL.LineEditREPL, :mistate) || repl.mistate !== nothing || return
-    close(timer)
-    notify(start.runtime.worker_start)
-end
-
-(start::WorkerStart)(repl::REPL.LineEditREPL) =
-    Timer(WorkerStart(start.runtime, repl), WORKER_START_POLL_S; interval = WORKER_START_POLL_S)
-(start::WorkerStart)(::REPL.AbstractREPL) = notify(start.runtime.worker_start)
+    Runtime(events, String(member), String(catalog_path), nothing, false, false, false, false)
 
 """
     Worker(runtime, indexer)
@@ -109,22 +82,22 @@ succeeded (see [`is_unreported!`](@ref)), the unknown `packages.<Name>`
 settings last warned about, and the environment upkeep done (see
 [`maintain_environment!`](@ref)).
 """
-struct Worker
-    runtime::Runtime
-    indexer::Indexer
-    builtins::Vector{PkgNames}
-    stdlibs::Vector{Base.PkgId}
-    reported_config_errors::Set{String}
-    reported_observation_errors::Set{String}
-    reported_refresh_errors::Set{String}
-    reported_unknown_packages::Set{String}
-    has_tried_setup::Base.RefValue{Bool}
-    deferred_stamp::Base.RefValue{FileStamp}
+mutable struct Worker
+    const runtime::Runtime
+    const indexer::Indexer
+    const builtins::Vector{PkgNames}
+    const stdlibs::Vector{Base.PkgId}
+    const reported_config_errors::Set{String}
+    const reported_observation_errors::Set{String}
+    const reported_refresh_errors::Set{String}
+    const reported_unknown_packages::Set{String}
+    has_tried_setup::Bool
+    deferred_stamp::FileStamp
 end
 
 Worker(runtime::Runtime, indexer::Indexer) =
     Worker(runtime, indexer, builtin_records(), stdlib_ids(), Set{String}(), Set{String}(), Set{String}(),
-           Set{String}(), Ref(false), Ref(MISSING_FILE_STAMP))
+           Set{String}(), false, MISSING_FILE_STAMP)
 
 "`Base.package_callbacks` entry: only enqueues an [`Observed`](@ref) event."
 struct ObserveLoad
@@ -138,29 +111,25 @@ const LOAD = LoadState()
 const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
 
 """
-    start_session!(; member = member_dir(), catalog = catalog_path(), is_deferred = false) -> Runtime
+    start_session!(; member = member_dir(), catalog = catalog_path()) -> Runtime
 
 Start this process's session: register load observation and environment
 change notification, start the worker (stopped by [`stop_worker!`](@ref) at
-exit) and request the first refresh. With `is_deferred`, the worker waits
-for `notify(runtime.worker_start)`. Inputs pass through
+exit) and request the first refresh. Inputs pass through
 [`repl_transform`](@ref) unchanged until the first session is derived. Once
 started, later calls return the running session's runtime unchanged
 (`__init__` starts it in interactive sessions).
 """
-function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path(),
-                        is_deferred::Bool = false)
+function start_session!(; member::AbstractString = member_dir(), catalog::AbstractString = catalog_path())
     RUNTIME[] === nothing || return RUNTIME[]
     runtime = Runtime(Channel{Event}(Inf), member, catalog)
     events = runtime.events
     RUNTIME[] = runtime
     push!(Base.package_callbacks, ObserveLoad(events))
     Autoloads.ENV_CHANGED[] = () -> put!(events, Refresh())
-    worker_start = runtime.worker_start
-    errormonitor(Threads.@spawn (wait(worker_start); run_worker(Worker(runtime, Indexer()))))
+    errormonitor(Threads.@spawn run_worker(Worker(runtime, Indexer())))
     atexit(() -> stop_worker!(runtime))
     put!(events, Refresh())
-    is_deferred || notify(worker_start)
     runtime
 end
 
@@ -173,7 +142,6 @@ worker compiles or writes can crash the process.
 """
 function stop_worker!(runtime::Runtime)
     @atomic runtime.is_stopping = true
-    notify(runtime.worker_start)
     done = Channel{Nothing}(1)
     put!(runtime.events, Flush(done))
     timedwait(() -> isready(done), STOP_WAIT_S; pollint = 0.01)
@@ -354,8 +322,8 @@ function maintain_environment!(worker::Worker)
             nothing
         end
     end
-    if !worker.has_tried_setup[] && !isfile(joinpath(worker.runtime.member, "Project.toml"))
-        worker.has_tried_setup[] = true
+    if !worker.has_tried_setup && !isfile(joinpath(worker.runtime.member, "Project.toml"))
+        worker.has_tried_setup = true
         previous = quietly(output -> Autoloads.adopt_previous!(global_dir; output),
                            "set up the autoloads environment from an older Julia version's")
         previous === nothing ||
@@ -363,8 +331,8 @@ function maintain_environment!(worker::Worker)
                    $(join(previous.names, ", ")) and the settings from Julia $(VERSION.major).$(previous.minor)"
     end
     stamp = file_stamp(joinpath(state_dir(), Autoloads.DEFERRED_FILE))
-    stamp == worker.deferred_stamp[] && return
-    worker.deferred_stamp[] = stamp
+    stamp == worker.deferred_stamp && return
+    worker.deferred_stamp = stamp
     stamp == MISSING_FILE_STAMP ||
         quietly(output -> Autoloads.apply_deferred!(global_dir; output), "apply the changes made from other Julia versions")
 end
