@@ -80,8 +80,8 @@ const COMMANDS = try
                     autoloads [up|update] [-g|--global] [pkg ...]
 
                 Update the given packages, or every package of the global environment and its
-                autoloads, in one resolve. With `-g`, every other Julia version's autoloads
-                environment is updated too.
+                autoloads, in one resolve, as `up` does with the global environment active. With
+                `-g`, every other Julia version's autoloads environment is updated too.
                 """),
         command(name = "status", short_name = "st", api = Autoloads.status, arg_count = 0 => Inf,
                 completions = complete_autoload_packages,
@@ -121,9 +121,11 @@ end
     wrap_pkg_commands!()
 
 Make each of [`ENV_CHANGING_COMMANDS`](@ref) call `Autoloads.notify_env_change()` after
-its `api` succeeds, under every alias. Idempotent; commands already wrapped by this
-function, and other wrappers on any command, are left to coexist. Warns and changes
-nothing if Pkg's `CommandSpec` or `SPECS` are not as expected.
+its `api` succeeds, under every alias, and `up` also update the autoload packages
+(as `--workspace` does) when the global environment is active, unless the `up_hook`
+setting is off. Idempotent; commands already wrapped by this function, and other
+wrappers on any command, are left to coexist. Warns and changes nothing if Pkg's
+`CommandSpec` or `SPECS` are not as expected.
 """
 function wrap_pkg_commands!()
     specs = find_package_specs()
@@ -131,10 +133,15 @@ function wrap_pkg_commands!()
         @warn "Autoloads cannot refresh after `pkg>` commands: this Pkg's REPLMode.SPECS/CommandSpec layout is not recognised" pkg_version = Pkg.pkgversion(Pkg)
         return
     end
+    up = specs["up"]
+    with_autoloads() = Base.active_project() == joinpath(Autoloads.global_env_dir(), "Project.toml") &&
+        Autoloads.load_config().up_hook
     for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
         original.api isa RefreshingApi && continue
-        wrapped = REPLMode.CommandSpec((if f === :api RefreshingApi(original.api) else getfield(original, f) end
-                                        for f in COMMAND_SPEC_FIELDS)...)
+        api = RefreshingApi(if original === up
+                                (args...; kwargs...) -> original.api(args...; workspace = with_autoloads(), kwargs...)
+                            else original.api end)
+        wrapped = REPLMode.CommandSpec((if f === :api api else getfield(original, f) end for f in COMMAND_SPEC_FIELDS)...)
         for (name, spec) in specs
             spec === original && (specs[name] = wrapped)
         end

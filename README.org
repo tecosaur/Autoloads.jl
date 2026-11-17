@@ -69,8 +69,8 @@ autoload it.
 directories to develop; ~add Foo~ develops =./Foo= if that directory exists.
 When ~autoloads init~ carries packages over from an older Julia version,
 developed and git-sourced ones keep their source. ~autoloads up~ updates
-the autoload packages together with the global environment's own; a plain
-~pkg> up~ in the global environment does not update the autoload packages.
+the autoload packages together with the global environment's own, as does a
+plain ~pkg> up~ with the global environment active.
 With ~-g~ (~--global~), a change is also made to every other Julia version
 that has an autoloads environment, each resolving it in the background when
 it next starts a REPL session.
@@ -87,6 +87,7 @@ Settings live in ~[preferences.Autoloads]~ in the global environment's
 | ~precompile~               | ~"background"~ | ~"lazy"~ indexes without precompiling                         |
 | ~bindings~                 | ~"all"~        | ~"used"~ loads only the names used                            |
 | ~log~                      | ~false~        | ~true~ announces each autoload with an info line              |
+| ~up_hook~                  | ~true~         | ~false~: ~pkg> up~ leaves the autoload packages alone         |
 | ~packages.<Name>.skip~     | ~[]~           | Names not to autoload                                         |
 | ~packages.<Name>.only~     | unset          | Autoload only these names                                     |
 | ~packages.<Name>.bindings~ | global setting | Per-package ~bindings~                                        |

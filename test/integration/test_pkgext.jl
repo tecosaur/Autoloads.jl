@@ -84,6 +84,25 @@ end
             @test notified[] == 1
         end
     end
+    @testset "up includes the autoloads when the global environment is active" begin
+        with_notifications() do _
+            workspace, spec, active = Ref(false), PACKAGE_SPECS["up"], Base.active_project()
+            fake = (args...; kwargs...) -> workspace[] = kwargs[:workspace]
+            PACKAGE_SPECS["up"] = Pkg.REPLMode.CommandSpec((f === :api ? fake : getfield(spec, f)
+                                                           for f in fieldnames(Pkg.REPLMode.CommandSpec))...)
+            Ext.wrap_pkg_commands!()
+            try
+                Base.set_active_project(joinpath(mktempdir(), "Project.toml"))
+                PACKAGE_SPECS["up"].api()
+                @test !workspace[]
+                Base.set_active_project(joinpath(Autoloads.global_env_dir(), "Project.toml"))
+                PACKAGE_SPECS["up"].api()
+                @test workspace[]
+            finally
+                Base.set_active_project(active)
+            end
+        end
+    end
     @testset "wrapping is idempotent and coexists with other wrappers" begin
         with_notifications() do notified
             before = PACKAGE_SPECS["up"]

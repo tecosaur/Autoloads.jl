@@ -23,11 +23,12 @@ struct PackageConfig
 end
 
 """
-    Config(stdlib, project, policy, bindings, log, packages)
+    Config(stdlib, project, policy, bindings, log, up_hook, packages)
 
 Typed autoload settings. `project === nothing` means every direct dependency
 of the project; an empty set means none. `log` is whether each autoload is
-announced. `packages` maps package names to their [`PackageConfig`](@ref).
+announced, `up_hook` whether `pkg> up` in the global environment also updates the
+autoload packages. `packages` maps package names to their [`PackageConfig`](@ref).
 """
 struct Config
     stdlib::Bool
@@ -35,6 +36,7 @@ struct Config
     policy::PrecompilePolicy
     bindings::Bindings
     log::Bool
+    up_hook::Bool
     packages::Dict{String, PackageConfig}
 end
 
@@ -57,7 +59,7 @@ function Base.showerror(io::IO, e::ConfigError)
           "or LocalPreferences.toml (or the active project's, if it overrides it).")
 end
 
-const TOP_LEVEL_KEYS = ["stdlib", "project", "precompile", "bindings", "log", "packages"]
+const TOP_LEVEL_KEYS = ["stdlib", "project", "precompile", "bindings", "log", "up_hook", "packages"]
 const PACKAGE_KEYS = ["skip", "only", "bindings"]
 const POLICY_NAMES = Dict("background" => Background, "lazy" => Lazy)
 const BINDINGS_NAMES = Dict("all" => AllBindings, "used" => UsedBindings)
@@ -67,7 +69,7 @@ const BINDINGS_NAMES = Dict("all" => AllBindings, "used" => UsedBindings)
 
 Parse merged preferences (as parsed TOML) into a [`Config`](@ref). Missing
 keys take their defaults: `stdlib = true`, `project = true`,
-`precompile = "background"`, `bindings = "all"`, `log = false`.
+`precompile = "background"`, `bindings = "all"`, `log = false`, `up_hook = true`.
 
 Throws [`ConfigError`](@ref) for unknown keys or values of the wrong shape.
 """
@@ -80,6 +82,7 @@ function parse_config(prefs::AbstractDict)
         parse_choice(prefs, "precompile", POLICY_NAMES, Background),
         parse_choice(prefs, "bindings", BINDINGS_NAMES, AllBindings),
         parse_bool(prefs, "log", false),
+        parse_bool(prefs, "up_hook", true),
         parse_packages(get(prefs, "packages", Dict{String, Any}())))
 end
 
