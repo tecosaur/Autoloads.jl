@@ -55,7 +55,7 @@ catalog_names(uuid, name, version, exported...; julia = JULIA_MINOR) =
             write_catalog_changes!(path, CatalogRecord[here_a])
             @test write_catalog_changes!(path, CatalogRecord[older_a])
             @test only(read_catalog(path)).at == [only(older_a.at); only(here_a.at)]
-            failed = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), only(older_a.at), "boom")
+            failed = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), older_a.at, "boom")
             @test write_catalog_changes!(path, CatalogRecord[failed])
             @test Set(read_catalog(path)) == Set(CatalogRecord[here_a, failed])
         end
@@ -68,8 +68,8 @@ catalog_names(uuid, name, version, exported...; julia = JULIA_MINOR) =
             @test !clear_failures!(path, [a])
             @test !ispath(dirname(path))
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
-            failures = CatalogRecord[PkgFailure(a, only(here(v"1.1.0")), "boom"), PkgFailure(a, only(here(nothing)), "?"),
-                                     PkgFailure(b, only(here(v"2.0.0")), "bang")]
+            failures = CatalogRecord[PkgFailure(a, here(v"1.1.0"), "boom"), PkgFailure(a, here(nothing), "?"),
+                                     PkgFailure(b, here(v"2.0.0"), "bang")]
             write_catalog_changes!(path, CatalogRecord[a1; failures])
             before = read(path)
             @test !clear_failures!(path, [Base.PkgId(CATALOG_UUID_A, "Other")])
@@ -84,7 +84,7 @@ catalog_names(uuid, name, version, exported...; julia = JULIA_MINOR) =
         mktempdir() do dir
             path = joinpath(dir, "catalog")
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
-            fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), only(here(v"3.0.0")), "boom")
+            fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), here(v"3.0.0"), "boom")
             b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
             @test write_catalog_changes!(path, CatalogRecord[a1, fail, b1])
             @test write_catalog_changes!(path, CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"2.0.0", :A)])

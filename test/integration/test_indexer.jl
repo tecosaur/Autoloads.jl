@@ -20,15 +20,15 @@ const INDEXER_WAIT_S = 120
     exit_failure = IndexerExt.exit_failure
     in_progress = FIXTURE_C => v"0.1.0"
     @test exit_failure(in_progress, 3, 0, false, 300) ==
-        PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer exited with code 3 while indexing")
+        PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer exited with code 3 while indexing")
     @test exit_failure(in_progress, 0, 9, true, 300) ==
-        PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer timed out after 300 s while indexing")
+        PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer timed out after 300 s while indexing")
     @test exit_failure(FIXTURE_C => nothing, 1, 0, false, 300) ==
-        PkgFailure(FIXTURE_C, only(here(nothing)), "indexer exited with code 1 while indexing")
+        PkgFailure(FIXTURE_C, here(nothing), "indexer exited with code 1 while indexing")
     @test exit_failure(in_progress, 0, 11, false, 300) ==
-        PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer killed by signal 11 while indexing")  # segfault
+        PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer killed by signal 11 while indexing")  # segfault
     @test exit_failure(in_progress, 0, 9, false, 300) ==
-        PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer killed by signal 9 while indexing")   # OOM killer
+        PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer killed by signal 9 while indexing")   # OOM killer
     @test exit_failure(in_progress, 0, 0, false, 300) === nothing   # finished normally
     @test exit_failure(in_progress, 0, 0, true, 300) === nothing    # timer fired as it finished
     @test exit_failure(in_progress, 0, 15, true, 300) === nothing   # stopped by someone else
@@ -92,7 +92,7 @@ end
         @test changed
         test_fixture_a_names(path)
         failure = failure_of(path, FIXTURE_B)
-        @test failure.at == only(here(v"0.1.0")) && occursin("FIXTUREB_FAIL", failure.message)
+        @test failure.at == here(v"0.1.0") && occursin("FIXTUREB_FAIL", failure.message)
         @test :fc in names_of(path, FIXTURE_C).exported
         @test isdir(joinpath(CACHE_DIR, "FixtureA"))
         output = IOBuffer()
@@ -107,7 +107,7 @@ end
         @test changed
         test_fixture_a_names(path)
         @test failure_of(path, FIXTURE_C) ==
-            PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer exited with code 3 while indexing")
+            PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer exited with code 3 while indexing")
         @test isempty(records_of(path, FIXTURE_B))
         @test !ispath(path * Autoloads.INDEXING_LOCK_SUFFIX)
     end
@@ -136,7 +136,7 @@ end
                                         env = ("FIXTUREC_HANG" => "1",))
         @test changed
         @test failure_of(path, FIXTURE_C) ==
-            PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "indexer timed out after 8 s while indexing")
+            PkgFailure(FIXTURE_C, here(v"0.1.0"), "indexer timed out after 8 s while indexing")
         @test !ispath(path * Autoloads.INDEXING_LOCK_SUFFIX)  # released for the next run despite SIGKILL
     end
     @testset "on_exit may start the next run" begin

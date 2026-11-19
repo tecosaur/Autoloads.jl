@@ -1,15 +1,9 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-"""
-The `pkg> autoloads` command group: `init`, `add`, `rm|remove`, `up|update`
-and `st|status`, each calling the Autoloads function of the same name; and
-the wrapping of the environment-changing `pkg>` commands so they request an
-autoload refresh. Both use Pkg's private `REPLMode`, so they are confined to
-[`COMMANDS`](@ref), [`register_commands!`](@ref) and
-[`wrap_pkg_commands!`](@ref), and each is skipped with a warning if Pkg's
-layout is not as expected. Also renders `Autoloads.status` (`print_status`).
-"""
+# The `pkg> autoloads` commands, refreshes after environment-changing `pkg>`
+# commands, and the status report. Each part using Pkg's private `REPLMode` is
+# skipped, with a warning, if its layout is unexpected.
 module AutoloadsPkgExt
 
 using Autoloads, Pkg, StyledStrings
@@ -23,7 +17,6 @@ const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funca
 # `nothing` without a REPL mode; then every use below fails soft.
 const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
 
-"Completions for a package argument of `autoloads status`: the autoload packages; none while the settings are invalid."
 function complete_autoload_packages(options, partial, offset, index; kwargs...)
     autoloads = try
         Autoloads.read_autoloads(Autoloads.global_env_dir(), Autoloads.catalog_path())
@@ -105,7 +98,6 @@ const ENV_CHANGING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "res
 const COMMAND_SPEC_FIELDS = (:canonical_name, :short_name, :api, :should_splat, :argument_spec,
                              :option_specs, :completions, :description, :help)
 
-"A Pkg command `api` that calls `api`, then requests an autoload refresh."
 struct RefreshingApi{F <: Function} <: Function
     api::F
 end
@@ -119,12 +111,9 @@ end
 """
     wrap_pkg_commands!()
 
-Make each of [`ENV_CHANGING_COMMANDS`](@ref) call `Autoloads.notify_env_change()` after
-its `api` succeeds, under every alias, and `up` also update the autoload packages
-(as `--workspace` does) when the global environment is active, unless the `up_hook`
-setting is off or the settings are invalid. Idempotent; commands already wrapped
-by this function, and other wrappers on any command, are left to coexist. Warns
-and changes nothing if Pkg's `CommandSpec` or `SPECS` are not as expected.
+Make the `ENV_CHANGING_COMMANDS` request an autoload refresh, and `up` in the
+global environment also update the autoload packages unless `up_hook` is off.
+Idempotent; warns and changes nothing if Pkg's layout is unexpected.
 """
 function wrap_pkg_commands!()
     specs = find_package_specs()
@@ -155,7 +144,6 @@ function wrap_pkg_commands!()
     end
 end
 
-"Pkg's `package` command table, or `nothing` if Pkg's layout lacks it or any command we wrap."
 function find_package_specs()
     isdefined(REPLMode, :SPECS) && isdefined(REPLMode, :CommandSpec) || return nothing
     specs = get(REPLMode.SPECS, "package", nothing)
@@ -252,7 +240,6 @@ function print_packages(@nospecialize(io::IO), autoloads::NamedTuple, ids::Vecto
     end
 end
 
-"Print `names` comma-separated at an indent of four, wrapped to the width of `io`."
 function print_wrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     line = "   "
     for (i, name) in enumerate(names)
@@ -266,7 +253,11 @@ function print_wrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     println(io, line)
 end
 
-"How `id` at `version` is indexed: its `(exports, public)` name counts, its `PkgFailure`, or `nothing` if it is not."
+"""
+    index_state(autoloads, id, version)
+
+How `id` at `version` is indexed: its `(exports, public)` counts, its `PkgFailure`, or `nothing`.
+"""
 function index_state((; cat, cfg)::NamedTuple, id::Base.PkgId, version::Union{VersionNumber, Nothing})
     record = names_at(cat, id, version)
     record === nothing && return failed_at(cat, id, version)
@@ -291,13 +282,6 @@ function __init__()
     wrap_pkg_commands!()
 end
 
-"""
-    register_commands!()
-
-Add the `pkg> autoloads` command group of [`COMMANDS`](@ref) to Pkg's
-`REPLMode.SPECS` and regenerate the `pkg>` help. Warns instead of throwing
-if Pkg's layout is not as expected.
-"""
 function register_commands!()
     try
         COMMANDS isa String && error(COMMANDS)

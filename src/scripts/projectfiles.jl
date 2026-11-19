@@ -1,8 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Reading and writing project files as Pkg does, for the scripts that edit
-# projects. The including script binds `TOML`.
+# Project files read and written as Pkg does. The including script binds `TOML`.
 
 # Pkg's top-level key order, so rewritten files read as Pkg writes them.
 const KEY_ORDER = ["name", "uuid", "keywords", "license", "desc", "version", "readonly", "workspace",
@@ -37,4 +36,26 @@ function manifest_sources(project_file)
         source === nothing || (sources[info["uuid"]] = source)
     end
     sources
+end
+
+"""
+The `[deps]` of `project_file`, with their `[compat]` and Julia's, and the
+`[sources]` of those developed or from a git repository: the project's own
+entry, else one made from its manifest (Pkg before 1.13 records sources there
+only). Paths are made absolute, for use in another project.
+"""
+function carried_deps(project_file)
+    project = TOML.parsefile(project_file)
+    deps = get(project, "deps", Dict{String, Any}())
+    declared = get(project, "sources", Dict{String, Any}())
+    recorded = manifest_sources(project_file)
+    absolute(source) = if haskey(source, "path")
+        merge(source, Dict("path" => normpath(joinpath(dirname(project_file), source["path"]))))
+    else
+        source
+    end
+    sources = Dict{String, Any}(name => absolute(get(declared, name, recorded[uuid]))
+                                for (name, uuid) in deps if haskey(declared, name) || haskey(recorded, uuid))
+    compat = filter(((name, _),) -> name == "julia" || haskey(deps, name), get(project, "compat", Dict{String, Any}()))
+    filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => deps, "compat" => compat, "sources" => sources))
 end

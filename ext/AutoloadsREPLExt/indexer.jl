@@ -1,11 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Indexer supervision: one `nice`d, detached subprocess (`src/scripts/index.jl`)
-# loads packages and writes their names to the catalog; a supervisor task
-# logs its output, enforces a per-package timeout, and records a failure for
-# the package in progress when the subprocess dies of anything but an
-# interruption. This session never loads packages to index them.
+# Supervises the indexer subprocess: its log, a per-package timeout, and a
+# failure recorded for the package a crash interrupts.
 
 const DEFAULT_TIMEOUT_S = 300
 const LOG_MAX_BYTES = 1 << 20
@@ -17,10 +14,8 @@ const INDEXER_ENV = ("JULIA_PKG_PRECOMPILE_AUTO" => "0",)
 """
     Indexer(; timeout_s = $DEFAULT_TIMEOUT_S)
 
-Runs at most one indexer subprocess at a time; see [`start_indexing!`](@ref).
-A package that takes longer than `timeout_s` seconds to load (precompilation
-excluded) is recorded as failed. Use from a single task; the supervisor of
-the run in progress owns `reported_errors` (see [`is_unreported!`](@ref)).
+Runs at most one indexer subprocess at a time, failing a package that takes
+over `timeout_s` to load. Use from one task.
 """
 mutable struct Indexer
     supervisor::Union{Task, Nothing}
@@ -33,24 +28,11 @@ Indexer(; timeout_s::Integer = DEFAULT_TIMEOUT_S) = Indexer(nothing, timeout_s, 
 """
     start_indexing!(ix, policy, project, path, wanted, on_exit) -> Bool
 
-Index the packages of `wanted` (`id => manifest version` pairs, `nothing` if
-unknown), in order, into the catalog at `path`, in a subprocess using
-environment `project`. Returns `false` without starting anything if `ix`
-already has a run in progress or `wanted` is empty.
-
-`policy` is the [`PrecompilePolicy`](@ref): `Background` first precompiles
-the non-stdlib packages with this session's flags; `Lazy` writes no caches.
-The subprocess's output is appended to `path * ".log"`. If another session's
-indexer of this Julia version holds its lock, the subprocess exits at once.
-
-Once the subprocess exits, a failure is recorded for the package it was
-loading if it timed out, crashed or exited abnormally (but not when
-interrupted by SIGINT, SIGTERM or SIGHUP); packages after it stay unrecorded
-so they are retried. A subprocess that fails to start, or a supervisor
-failure, is logged, once per distinct error until a run succeeds. Either way,
-once the run is over `on_exit(changed::Bool)` is called on a spawned task,
-`changed` being whether the catalog file differs from before the run; `ix`
-is free by then, so `on_exit` may start the next run.
+Index `wanted` (`id => version` pairs), in order, into the catalog at `path` in
+a subprocess using `project`, unless a run is in progress (then `false`). The
+package being loaded when the subprocess crashes or times out is recorded as
+failed, but not when it is interrupted. Once the run is over, `on_exit(changed)`
+is called on a new task, `changed` being whether the catalog was written.
 """
 function start_indexing!(ix::Indexer, policy::PrecompilePolicy, project::AbstractString, path::AbstractString,
                          wanted::Vector{Pair{Base.PkgId, Union{VersionNumber, Nothing}}}, on_exit::Function)
@@ -76,14 +58,14 @@ end
 """
     exit_failure(in_progress, exitcode, termsignal, timed_out, timeout_s) -> Union{PkgFailure, Nothing}
 
-The failure to record for `in_progress` (the `id => version` announced and
-not yet recorded, or `nothing`) given how the indexer exited.
+The failure to record for `in_progress`, the package being indexed (or
+`nothing`), given how the indexer exited.
 """
 function exit_failure(in_progress, exitcode::Integer, termsignal::Integer, timed_out::Bool, timeout_s::Integer)
     in_progress === nothing && return nothing
     exitcode == 0 && termsignal == 0 && return nothing
     id, version = in_progress
-    at = (; version, julia = JULIA_MINOR)
+    at = Sighting[(; version, julia = JULIA_MINOR)]
     timed_out && termsignal == Base.SIGKILL &&
         return PkgFailure(id, at, "indexer timed out after $timeout_s s while indexing")
     termsignal in INTERRUPT_SIGNALS && return nothing

@@ -1,18 +1,14 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Loading autoload packages into `Main`. A package the current environment
-# provides is loaded from there. Otherwise the autoloads member is pushed onto
-# `LOAD_PATH` for the duration of the load only, after checking that no
-# already-loaded package conflicts with the member's manifest.
+# Loading into `Main`: from the active environment when it has the package, else
+# with the member briefly on `LOAD_PATH`, after a version check.
 
 """
     LoadState()
 
-The loads tried this session: `attempted` holds `(id, name)` per
-[`load!`](@ref) call (`name` is `nothing` for whole-package loads), `failed`
-the packages that failed to load and are not retried until
-[`forget_failures!`](@ref).
+The `(id, name)` loads tried this session (`name` is `nothing` for a whole
+package), and the packages that failed, not retried until `forget_failures!`.
 """
 struct LoadState
     attempted::Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}
@@ -22,53 +18,12 @@ end
 LoadState() = LoadState(Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}(), Set{Base.PkgId}())
 
 """
-    InconsistentVersions(id, conflicts)
-
-Loading `id` from the autoloads member would mix versions: each conflict is
-`(name, loaded version, member manifest version)`.
-"""
-struct InconsistentVersions <: Exception
-    id::Base.PkgId
-    conflicts::Vector{Tuple{String, VersionNumber, VersionNumber}}
-end
-
-function Base.showerror(io::IO, err::InconsistentVersions)
-    differences = join(("$name v$loaded differs from v$wanted" for (name, loaded, wanted) in err.conflicts), ", ")
-    print(io, "Not autoloading ", err.id.name, ": already-loaded ", differences,
-          " in the autoloads environment. Add ", err.id.name, " to the active project to load it there.")
-end
-
-"""
-    AutoloadFailure(id, reason, remedy)
-
-Package `id` cannot be autoloaded because of `reason`; `remedy` says what to do.
-"""
-struct AutoloadFailure <: Exception
-    id::Base.PkgId
-    reason::String
-    remedy::String
-end
-
-Base.showerror(io::IO, err::AutoloadFailure) =
-    print(io, "Cannot autoload ", err.id.name, ": ", err.reason, ". ", err.remedy)
-
-"""
     load!(state, req, member; announce = true) -> Bool
 
-Load `req.id` into `Main` (`using A.B`, or `using A.B: name` when `req.name`
-is set), announcing it with an info line naming `req.trigger` if `announce`. A package the
-current `LOAD_PATH` provides (or a built-in) is loaded directly; otherwise
-from the autoloads `member` directory, which is on `LOAD_PATH` only during
-the load and only once every loaded package in its dependency closure matches
-the member manifest's version. `LOAD_PATH` is unchanged afterwards.
-
-Returns whether it loaded. A failure (including [`InconsistentVersions`](@ref)
-and an [`AutoloadFailure`](@ref) for a package that is not installed) is
-logged as one warning and recorded in `state.failed`; failed packages are
-not retried until [`forget_failures!`](@ref). Every call records
-`(req.id, req.name)` in `state.attempted`, except one interrupted by Ctrl-C:
-the `InterruptException` propagates and nothing is recorded, so the load can
-be retried.
+Load `req` into `Main`: from the active environment if it has the package, else
+from `member`, once the versions it would load agree with those loaded. Returns
+whether it loaded; a failure is logged once, and not retried until
+`forget_failures!`. An interrupt propagates and records nothing.
 """
 function load!(state::LoadState, req::LoadRequest, member::AbstractString; announce::Bool = true)
     key = (req.id, req.name)
@@ -81,8 +36,8 @@ function load!(state::LoadState, req::LoadRequest, member::AbstractString; annou
             check_versions(req.id, member)
             with_member(member) do
                 Base.locate_package(req.id) === nothing &&
-                    throw(AutoloadFailure(req.id, "it is not installed in the autoloads environment",
-                                          "Run `pkg> instantiate` with the global environment active to install it."))
+                    error("$(req.id.name) is not installed in the autoloads environment; ",
+                          "run `pkg> instantiate` with the global environment active to install it")
                 Core.eval(Main, using_expr(req))
             end
         end
@@ -97,12 +52,6 @@ function load!(state::LoadState, req::LoadRequest, member::AbstractString; annou
     loaded
 end
 
-"""
-    forget_failures!(state)
-
-Forget the failed loads of `state`, so they are tried again: the remedies
-[`load!`](@ref) suggests change the environment.
-"""
 function forget_failures!(state::LoadState)
     isempty(state.failed) && return
     filter!(((id, _),) -> id ∉ state.failed, state.attempted)
@@ -113,19 +62,8 @@ end
 """
     eval_with_member(stmt, member)
 
-Evaluate `stmt` in `Main`, with the autoloads `member` directory on
-`LOAD_PATH` during evaluation if a package that a `using`/`import` in `stmt`
-names cannot be found on the current `LOAD_PATH` (`Base`, `Core` and `Main`
-never need it). Each such package that `member` provides first passes the
-same version guard as [`load!`](@ref). `LOAD_PATH` is unchanged afterwards.
-
-Raises [`InconsistentVersions`](@ref) when the guard fails, before anything
-is evaluated; errors from `stmt` propagate.
-
-# Example
-```julia
-eval_with_member(:(@time using DataFrames), Autoloads.member_dir())
-```
+Evaluate `stmt` in `Main`, with `member` on `LOAD_PATH` while it does if `stmt`
+imports a package only `member` provides, after `load!`'s version check.
 """
 function eval_with_member(stmt, member::AbstractString)
     roots = member_only_roots(stmt)
@@ -151,7 +89,6 @@ function using_expr(req::LoadRequest)
     Expr(:using, if req.name === nothing path else Expr(:(:), path, Expr(:., req.name)) end)
 end
 
-"Throw [`InconsistentVersions`](@ref) unless loaded packages `id` depends on match `member`'s manifest."
 function check_versions(id::Base.PkgId, member::AbstractString)
     graph = manifest_graph(joinpath(member, "Project.toml"))
     closure = dependency_closure(graph, id.uuid)
@@ -163,10 +100,12 @@ function check_versions(id::Base.PkgId, member::AbstractString)
         wanted === nothing || actual === nothing || actual == wanted ||
             push!(conflicts, (pkg.name, actual, wanted))
     end
-    isempty(conflicts) || throw(InconsistentVersions(id, sort!(conflicts)))
+    isempty(conflicts) && return
+    differences = join(("$name v$loaded differs from v$wanted" for (name, loaded, wanted) in sort!(conflicts)), ", ")
+    error("Not autoloading $(id.name): already-loaded $differences in the autoloads environment. ",
+          "Add $(id.name) to the active project to load it there.")
 end
 
-"Call `f()` with `member` appended to `LOAD_PATH`, removing exactly that entry afterwards."
 function with_member(f, member::AbstractString)
     push!(LOAD_PATH, member)
     try
@@ -177,26 +116,8 @@ function with_member(f, member::AbstractString)
     end
 end
 
-"""
-    member_only_roots(stmt) -> Vector{Symbol}
-
-The package roots `stmt` imports (`A` of `using A.B`, `import A: x`,
-`import A as B`) that the current `LOAD_PATH` cannot find; relative imports
-and `Base`, `Core` and `Main` excluded.
-"""
 function member_only_roots(stmt)
     roots = Symbol[]
-    function visit(ex)
-        ex isa Expr || return
-        if ex.head in (:using, :import)
-            for arg in ex.args
-                path = if Meta.isexpr(arg, (:(:), :as)) first(arg.args) else arg end
-                path isa Expr && path.head === :. && first(path.args) !== :. && push!(roots, first(path.args))
-            end
-        else
-            foreach(visit, ex.args)
-        end
-    end
-    visit(stmt)
-    filter!(root -> root ∉ (:Base, :Core, :Main) && Base.identify_package(String(root)) === nothing, roots)
+    any_unquoted(node -> (Meta.isexpr(node, (:using, :import)) && append!(roots, import_roots(node)); false), stmt)
+    filter!(root -> root ∉ (:Base, :Core, :Main) && Base.identify_package(String(root)) === nothing, unique!(roots))
 end

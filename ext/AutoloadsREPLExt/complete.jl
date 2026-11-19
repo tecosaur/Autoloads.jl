@@ -1,16 +1,12 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Tab completion: autoloadable names complete before their package loads,
-# unqualified (exported names) and `P.` qualified (exported, public and
-# re-exported). A pure core (`completions_for`, `completion_context`) sits
-# behind `CompletionWrapper`, the one layer that touches LineEdit internals.
+# Tab completion of autoloadable names, unqualified and after `P.`.
 
 """
     CompletionWrapper(inner)
 
-A completion provider that adds autoloadable names to those of `inner`, the
-Julian prompt's provider. Install with [`install_completion`](@ref).
+A completion provider adding autoloadable names to those of `inner`.
 """
 struct CompletionWrapper{P <: LineEdit.CompletionProvider} <: LineEdit.CompletionProvider
     inner::P
@@ -19,10 +15,8 @@ end
 """
     completions_for(reg, cat, prefix, qualifier, isbound) -> Vector{String}
 
-The sorted autoloadable names starting with `prefix`. Unqualified
-(`qualifier === nothing`): the names `reg` owns for which `isbound(name)`
-is false. Qualified: when `qualifier` is an unbound autoload package, the
-exported, public and re-exported names of its newest record in `cat`.
+The sorted autoloadable names starting with `prefix`: the unbound names `reg`
+owns, or every name of the autoload package `qualifier`.
 """
 function completions_for(reg::Registry, cat::Catalog, prefix::String, qualifier::Union{Symbol, Nothing},
                          isbound::Function)
@@ -49,10 +43,8 @@ end
 """
     completion_context(full, region) -> Union{Tuple{String, Union{Symbol, Nothing}}, Nothing}
 
-The `(prefix, qualifier)` being completed when `region` (a byte range of
-`full`, as LineEdit gives it) is a name, possibly after a root `P.`;
-`nothing` for anything else, such as field access, `using`/`import`, or
-inside a string, character, command or comment.
+The `(prefix, qualifier)` being completed at `region` of `full`, if a name
+(possibly after a root `P.`), or `nothing`, as in strings, comments or `using`.
 """
 function completion_context(full::String, region::Pair{Int, Int})
     bytes = codeunits(full)
@@ -76,12 +68,6 @@ function completion_context(full::String, region::Pair{Int, Int})
     if Base.isidentifier(qualifier) && is_root; (prefix, Symbol(qualifier)) end
 end
 
-"""
-    install_completion()
-
-Wrap the Julian prompt's completion provider in a [`CompletionWrapper`](@ref):
-now if a line-editing REPL is running, else from an `atreplinit` callback.
-"""
 function install_completion()
     repl = if isdefined(Base, :active_repl) Base.active_repl end
     if repl isa REPL.LineEditREPL && isdefined(repl, :interface)
@@ -124,7 +110,7 @@ function wrap_completion!(repl)
             return
         end
     end
-    @warn "Autoloads found no Julian prompt to extend tab completion for; completion is unchanged"
+    @warn "Autoloads found no `julia>` prompt to extend tab completion for; completion is unchanged"
 end
 
 # `inner`'s result with the autoloadable names in its context merged in.

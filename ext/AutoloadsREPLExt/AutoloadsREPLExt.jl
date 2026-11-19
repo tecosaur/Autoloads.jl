@@ -1,14 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-"""
-REPL integration for Autoloads: scans REPL input for references that an
-autoload package could satisfy, loads those packages just before the
-statements that need them, and keeps the catalog current by observing loads
-and indexing packages in a supervised subprocess, all coordinated by one
-session worker (see `session.jl`). Also suggests providers on `UndefVarError`
-(`hints.jl`) and completes autoloadable names (`complete.jl`).
-"""
+# REPL integration: autoloads what input needs, hints providers on
+# `UndefVarError`, and completes autoloadable names.
 module AutoloadsREPLExt
 
 using Autoloads, REPL, StyledStrings

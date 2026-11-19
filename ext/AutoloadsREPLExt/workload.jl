@@ -43,8 +43,8 @@ try
             member = joinpath(dir, "autoloads")
             mkpath(member)
             write(joinpath(member, "Project.toml"), "[deps]\nWorkload = \"$(id.uuid)\"\n")
-            failure = PkgFailure(id, (; version = v"0.9.0", julia = JULIA_MINOR), "failed")
-            write_catalog_changes!(joinpath(dir, "catalog"), [records; failure])
+            write_catalog_changes!(joinpath(dir, "catalog"),
+                                   push!(copy(records), PkgFailure(id, Sighting[(; version = v"0.9.0", julia = JULIA_MINOR)], "failed")))
             parse_config(Dict{String, Any}("project" => ["Workload"], "packages" => Dict{String, Any}(
                 "Workload" => Dict{String, Any}("skip" => ["wl"], "only" => ["wp"], "bindings" => "used"))))
             worker = Worker(Runtime(Channel{Event}(Inf), member, joinpath(dir, "catalog")), Indexer())

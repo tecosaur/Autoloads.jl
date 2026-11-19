@@ -27,7 +27,7 @@ names_record(versions, exported = Symbol[], public = Symbol[], reexported = Symb
     PkgNames(ID_A, sightings(versions, julia), Set(exported), Set(public), Set(reexported))
 
 failure_record(version, message = "boom"; julia = JULIA_MINOR) =
-    PkgFailure(ID_A, only(sightings([version], julia)), message)
+    PkgFailure(ID_A, sightings([version], julia), message)
 
 @testset "extract_names" begin
     r = extract_names(ExtractFixture)
@@ -103,6 +103,8 @@ end
         failed = failure_record("1.0.0"; julia = v"1.0")
         @test merge_observation(CatalogRecord[a1], failed) == CatalogRecord[a1, failed]
         @test merge_observation(CatalogRecord[failed], a1) == CatalogRecord[failed, a1]
+        @test merge_observation(CatalogRecord[failed], failure_record("1.0.0")) ==
+              CatalogRecord[PkgFailure(ID_A, [sightings(["1.0.0"], v"1.0"); sightings(["1.0.0"])], "boom")]
     end
 end
 
@@ -120,7 +122,7 @@ function random_record(rng)
     id = Base.PkgId(Base.UUID(rand(rng, UInt128)), rand(rng, ("Foo", "Bar_baz", "Ünï")))
     if rand(rng, Bool)
         message = join(rand(rng, ("a", " ", "\t", "\n", "\\", "\\n", "\r", "end")), "") * "x"
-        PkgFailure(id, random_sighting(rng), message)
+        PkgFailure(id, random_sightings(rng), message)
     else
         sets = (random_symbols(rng), random_symbols(rng), random_symbols(rng))
         kinds = Dict{Symbol, Char}(name => rand(rng, ".+:=") for names in sets for name in names
@@ -135,7 +137,7 @@ end
     rng = Random.MersenneTwister(7)
     namespaces = [Set([:A, :f]), Set([:A, :g]), Set([:A])]
     random_names(rng) = PkgNames(ID_A, random_sightings(rng), rand(rng, namespaces), Set{Symbol}(), Set{Symbol}())
-    random_observation(rng) = if rand(rng, Bool) random_names(rng) else PkgFailure(ID_A, random_sighting(rng), "boom") end
+    random_observation(rng) = if rand(rng, Bool) random_names(rng) else PkgFailure(ID_A, [random_sighting(rng)], "boom") end
     @test all(1:500) do _
         existing = foldl(merge_observation, [random_observation(rng) for _ in 1:rand(rng, 0:4)]; init = CatalogRecord[])
         new = random_names(rng)
@@ -192,7 +194,6 @@ end
         "$UUID_A\tA\t1.0.0@1.123456\tok\t+f\t?p\t",
         "$UUID_A\tA\t1.0.0@1.12@1.13\tok\t+f\t?p\t",
         "$UUID_A\tA\t1.0.0@1.12;\tok\t+f\t?p\t",
-        "$UUID_A\tA\t1.0.0,1.1.0@$J\tfailed\tboom",
         "$UUID_A\tA\t1.0.0@$J\tmaybe\t+f\t?p\t",
         "$UUID_A\tA\t1.0.0@$J\tfailed",
         "$UUID_A\tA\t1.0.0@$J\tfailed\tbad\\escape",

@@ -1,17 +1,13 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Catalog and registry: the catalog records which names each package provides
-# per version; the registry is the immutable name -> owning package view of
-# what may autoload. Everything here is pure.
+# Pure lookups over the catalog, and the registry of names that may autoload.
 
 """
     Catalog
 
-Catalog records grouped by package id, as seen from Julia minor version
-`julia`, plus a name -> providers index over each package's newest
-[`PkgNames`](@ref) there (exported and re-exported names). Build with
-[`build_catalog`](@ref).
+Catalog records by package, and a name → providers index over each package's
+newest namespace, as seen from Julia minor `julia`. Build with `build_catalog`.
 """
 struct Catalog
     records::Dict{Base.PkgId, Vector{CatalogRecord}}
@@ -22,10 +18,9 @@ end
 """
     Registry
 
-The names that may autoload: `owners` maps a name to the one package that
-provides it, `shared` a name to the packages re-exporting it from one origin
-(it comes from whichever is loaded), and `ambiguous` contested names to their
-claimants. Build with [`build_registry`](@ref).
+The names that may autoload: `owners` maps a name to its one provider,
+`shared` to the packages re-exporting it from one origin, and `ambiguous` to
+its rival claimants. Build with `build_registry`.
 """
 struct Registry
     owners::Dict{Symbol, Base.PkgId}
@@ -36,8 +31,7 @@ end
 """
     LoadRequest(id, trigger, name)
 
-Load package `id` because `trigger` was referenced. `name === nothing` asks
-for the whole package; otherwise only `name`.
+Load package `id`, or only its `name` if set, because `trigger` was referenced.
 """
 struct LoadRequest
     id::Base.PkgId
@@ -45,19 +39,13 @@ struct LoadRequest
     name::Union{Symbol, Nothing}
 end
 
-"""
-    build_catalog(records; julia = JULIA_MINOR) -> Catalog
-
-Fold `records` in order with [`merge_observation`](@ref), for lookups from
-Julia minor version `julia`.
-"""
 function build_catalog(records; julia::VersionNumber = JULIA_MINOR)
     grouped = Dict{Base.PkgId, Vector{CatalogRecord}}()
     for record in records
         grouped[record.id] = merge_observation(get(grouped, record.id, CatalogRecord[]), record)
     end
     providers = Dict{Symbol, Vector{Tuple{Base.PkgId, Bool}}}()
-    for id in sort!(collect(keys(grouped)); by = id -> (id.name, string(id.uuid)))
+    for id in sort!(collect(keys(grouped)); by = pkg_order)
         newest = best_names(grouped[id], nothing, julia)
         newest === nothing && continue
         for name in newest.exported ∪ newest.reexported
@@ -67,32 +55,27 @@ function build_catalog(records; julia::VersionNumber = JULIA_MINOR)
     Catalog(grouped, providers, julia)
 end
 
-"All records for `id`, or an empty vector."
 records_of(cat::Catalog, id::Base.PkgId) = get(cat.records, id, CatalogRecord[])
 
 """
     names_at(cat, id, version) -> Union{PkgNames, Nothing}
 
-The record of `id` seen at package `version` on the catalog's Julia minor,
-or failing that on the nearest other minor, older ones first; for `nothing`,
-the newest version seen there. A record seen only on another minor stands in
-until `id` is indexed on this one (see [`to_index`](@ref)).
+The record of `id` at `version` (the newest, for `nothing`), seen on the
+catalog's Julia minor or else the nearest other, older ones first.
 """
 names_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing}) =
     best_names(records_of(cat, id), version, cat.julia)
 
-"The [`PkgFailure`](@ref) recorded for `id` at `version` on the catalog's Julia minor, or `nothing`."
 function failed_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing})
     records = records_of(cat, id)
-    index = findfirst(r -> r isa PkgFailure && r.at == (; version, cat.julia), records)
+    index = findfirst(r -> r isa PkgFailure && (; version, cat.julia) in r.at, records)
     if index !== nothing records[index] end
 end
 
 """
     providers(cat, name) -> Vector{Tuple{Base.PkgId, Bool}}
 
-Packages whose newest namespace exports or re-exports `name`, as
-`(id, owns)` pairs sorted by package name; `owns` is false for re-exports.
+The `(id, owns)` packages whose newest namespace exports (`owns`) or re-exports `name`.
 """
 providers(cat::Catalog, name::Symbol) = get(cat.providers, name, Tuple{Base.PkgId, Bool}[])
 
@@ -100,10 +83,9 @@ providers(cat::Catalog, name::Symbol) = get(cat.providers, name, Tuple{Base.PkgI
     autoload_set(member_deps, member_graph, project_deps, project_graph,
                  stdlibs, builtins, cfg) -> Dict{Base.PkgId, Union{VersionNumber, Nothing}}
 
-The packages to autoload and their versions: member-environment deps (at
-`member_graph` versions), stdlibs and built-ins when `cfg.stdlib`, and the
-active project's direct deps selected by `cfg.project` (at `project_graph`
-versions, winning over the other sources).
+The packages to autoload, with their versions: the member's deps, stdlibs and
+built-ins if `cfg.stdlib`, and the active project's selected deps, whose
+versions win.
 """
 function autoload_set(member_deps, member_graph::ManifestGraph, project_deps, project_graph::ManifestGraph,
                       stdlibs, builtins, cfg::Config)
@@ -129,18 +111,16 @@ end
 """
     build_registry(cat, autoload, cfg) -> Registry
 
-Index the names of each package in `autoload` (the record at its version,
-else its newest). A name owned by exactly one package goes to it; failing
-that, one re-exporter gets it, or several of the same known origin share it;
-anything else is ambiguous.
+Assign the names the packages in `autoload` offer: each to its one owner, else
+its one re-exporter, or shared by re-exporters of one origin; anything else is
+ambiguous.
 """
 function build_registry(cat::Catalog, autoload::AbstractDict, cfg::Config)
     owning = Dict{Symbol, Vector{Base.PkgId}}()
     reexporting = Dict{Symbol, Vector{Base.PkgId}}()
     records = Dict{Base.PkgId, PkgNames}()
-    for (id, version) in sort!(collect(autoload); by = ((id, _),) -> (id.name, string(id.uuid)))
-        record = something(names_at(cat, id, version), names_at(cat, id, nothing), Some(nothing))
-        record === nothing && continue
+    for id in sort!(collect(keys(autoload)); by = pkg_order)
+        record = @something(names_at(cat, id, autoload[id]), names_at(cat, id, nothing), continue)
         records[id] = record
         for name in autoload_names(record, package_config(cfg, id.name))
             push!(get!(if name in record.exported owning else reexporting end, name, Base.PkgId[]), id)
@@ -162,22 +142,16 @@ function build_registry(cat::Catalog, autoload::AbstractDict, cfg::Config)
     Registry(owners, shared, ambiguous)
 end
 
-"The package that owns `name`, or `nothing`."
 owner(reg::Registry, name::Symbol) = get(reg.owners, name, nothing)
 
-"Whether `name` is owned by an autoload package, or shared by several."
 is_candidate(reg::Registry, name::Symbol) = haskey(reg.owners, name) || haskey(reg.shared, name)
 
 """
     pending_loads(reg, cfg, names, isbound, isloaded, attempted) -> Vector{LoadRequest}
 
-Loads needed for the referenced `names`, skipping names for which
-`isbound(name)` holds and `(id, name)` pairs in `attempted` (`name` is
-`nothing` for whole-package loads). A shared name is requested, after the
-others, from the first of its packages that is loaded (`isloaded(id)`) or
-about to be by these requests, and skipped if there is none. Packages in
-`AllBindings` mode yield one whole-package request; in `UsedBindings` mode
-one request per name.
+The loads the referenced `names` need, skipping bound names and pairs in
+`attempted`. A shared name loads from the first of its packages that is loaded
+or being loaded here. `UsedBindings` packages get one request per name.
 """
 function pending_loads(reg::Registry, cfg::Config, names, isbound::Function, isloaded::Function,
                        attempted::Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}})
@@ -206,9 +180,8 @@ end
 """
     to_index(cat, wanted) -> Vector{Base.PkgId}
 
-Packages in `wanted` whose version has, on the catalog's Julia minor, neither
-a namespace record nor a recorded failure. A `nothing` version is covered by
-any namespace record there.
+The packages in `wanted` that this Julia minor has neither indexed at their
+version (any version, for `nothing`) nor recorded as failing.
 """
 function to_index(cat::Catalog, wanted::AbstractDict)
     function has_names_here(id, version)
@@ -220,25 +193,24 @@ function to_index(cat::Catalog, wanted::AbstractDict)
     end
     missing_ids = [id for (id, version) in wanted
                    if !has_names_here(id, version) && failed_at(cat, id, version) === nothing]
-    sort!(missing_ids; by = id -> (id.name, string(id.uuid)))
+    sort!(missing_ids; by = pkg_order)
 end
 
 # ── Helpers ──
 
-"The record of `records` that [`names_at`](@ref) picks for `version` from Julia minor `julia`."
+pkg_order(id::Base.PkgId) = (id.name, string(id.uuid))
+
 function best_names(records::Vector{CatalogRecord}, version::Union{VersionNumber, Nothing}, julia::VersionNumber)
+    # Higher is better: this minor, then older ones nearest first, then newer; then the newest version.
     best, best_rank = nothing, nothing
-    for record in records
-        record isa PkgNames || continue
-        for sighting in record.at
-            version === nothing || sighting.version == version || continue
-            # Higher is better: this minor, then older ones nearest first, then newer; then the newest version.
-            (; major, minor) = sighting.julia
-            is_older = sighting.julia <= julia
-            rank = (is_older, if is_older; (major, minor) else (-major, -minor) end, version_order(sighting.version))
-            if best_rank === nothing || rank > best_rank
-                best, best_rank = record, rank
-            end
+    for record in records, sighting in (if record isa PkgNames record.at else () end)
+        version === nothing || sighting.version == version || continue
+        # Higher is better: this minor, then older ones nearest first, then newer; then the newest version.
+        (; major, minor) = seen = sighting.julia
+        is_older = seen <= julia
+        rank = (is_older, if is_older; (major, minor) else (-major, -minor) end, version_order(sighting.version))
+        if best_rank === nothing || rank > best_rank
+            best, best_rank = record, rank
         end
     end
     best

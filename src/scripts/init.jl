@@ -1,15 +1,11 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Global autoloads environment setup, run by `Autoloads.init` as
+# Run by `Autoloads.init` as
 #
 #     julia --project=<global env> init.jl <global env dir> <member to carry over, or "">
 #
-# Lists the `autoloads` member in the global Project.toml's workspace,
-# creates it (with the packages and Autoloads preferences of the member
-# carried over, if any) and resolves. A failure restores the files changed and
-# removes what was created, so `init` can be run again; a Pkg or resolver
-# error is printed without a backtrace and exits 1.
+# Lists, creates and resolves the `autoloads` member, undoing it all on failure.
 
 const TOML = Base.require(Base.PkgId(Base.UUID("fa267f1f-6049-4f14-aa54-33bafae1ed76"), "TOML"))
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
@@ -90,28 +86,6 @@ function carry_preferences(global_dir, previous_dir)
         write_toml(target, content)
         println("Carried over the Autoloads preferences in $source")
     end
-end
-
-"""
-The `[deps]` of `project_file`, with their `[compat]` and Julia's, and the
-`[sources]` of those developed or from a git repository: the project's own
-entry, else one made from its manifest (Pkg before 1.13 records sources there
-only). Paths are made absolute, as the new member is elsewhere.
-"""
-function carried_deps(project_file)
-    project = TOML.parsefile(project_file)
-    deps = get(project, "deps", Dict{String, Any}())
-    declared = get(project, "sources", Dict{String, Any}())
-    recorded = manifest_sources(project_file)
-    absolute(source) = if haskey(source, "path")
-        merge(source, Dict("path" => normpath(joinpath(dirname(project_file), source["path"]))))
-    else
-        source
-    end
-    sources = Dict{String, Any}(name => absolute(get(declared, name, recorded[uuid]))
-                                for (name, uuid) in deps if haskey(declared, name) || haskey(recorded, uuid))
-    compat = filter(((name, _),) -> name == "julia" || haskey(deps, name), get(project, "compat", Dict{String, Any}()))
-    filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => deps, "compat" => compat, "sources" => sources))
 end
 
 try

@@ -70,7 +70,7 @@ if GROUP == "global"
         @testset "not installed" begin
             loaded, logs = logged_load!(state, LoadRequest(FIXTURE_MISSING, :fm, nothing))
             @test !loaded && warned_once(logs, text -> endswith(text,
-                "Run `pkg> instantiate` with the global environment active to install it."))
+                "run `pkg> instantiate` with the global environment active to install it"))
         end
         @testset "a pre-existing member entry survives" begin
             push!(LOAD_PATH, MEMBER)
@@ -115,7 +115,7 @@ elseif GROUP == "project"
         @test !loaded && warned_once(logs, ==(conflict))
         @testset "an explicit member using is guarded too" begin
             err = try Ext.eval_with_member(:(using FixtureB), MEMBER) catch e; e end
-            @test err isa Ext.InconsistentVersions && sprint(showerror, err) == conflict
+            @test err isa ErrorException && err.msg == conflict
             @test LOAD_PATH == DEFAULT_LOAD_PATH
         end
         @test !isdefined(Main, :fb)

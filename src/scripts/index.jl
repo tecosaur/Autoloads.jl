@@ -1,17 +1,14 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Indexer subprocess: load each requested package and record its namespace,
-# or why it failed to load, in the catalog. Started by `start_indexing!` as
+# The indexer subprocess, started by `start_indexing!` as
 #
 #     julia --project=<env> index.jl <lazy|background> <catalog path> <uuid=name=version>...
 #
-# with `-` for an unknown version. Progress goes to stdout for the supervisor:
-# `indexing <uuid>` before loading each package, `indexed <uuid>` once its
-# record is written, and `precompiling start` / `precompiling done` around the
-# precompile phase. If another indexer of this Julia version holds the indexing
-# lock, exits 0 without printing any of these. Interruption exits with
-# INTERRUPTED_EXIT_CODE so the supervisor can tell it from a crash.
+# (`-` for an unknown version). Reports `indexing <uuid>` and `indexed <uuid>`
+# around each package, and `precompiling start` and `done` around precompiling.
+# Exits 0 at once if another indexer of this Julia version holds the lock, and
+# with INTERRUPTED_EXIT_CODE when interrupted.
 
 include(joinpath(@__DIR__, "..", "records.jl"))
 include(joinpath(@__DIR__, "..", "catalogfile.jl"))
@@ -63,13 +60,14 @@ end
 # will be asked about, rather than `pkgversion`.
 function index_package(path, id::Base.PkgId, version::Union{VersionNumber, Nothing})
     report("indexing $(id.uuid)")
+    at = Sighting[(; version, julia = JULIA_MINOR)]
     record = try
         names = Base.invokelatest(extract_names, Base.require(id), id)
-        if version === nothing names else with_sightings(names, Sighting[(; version, julia = JULIA_MINOR)]) end
+        if version === nothing names else with_sightings(names, at) end
     catch err
         is_interrupt(err) && rethrow()
         @error "Failed to load $(id.name) for indexing" exception = (err, catch_backtrace())
-        PkgFailure(id, (; version, julia = JULIA_MINOR), first(sprint(showerror, err), MAX_MESSAGE_CHARS))
+        PkgFailure(id, at, first(sprint(showerror, err), MAX_MESSAGE_CHARS))
     end
     write_catalog_changes!(path, CatalogRecord[record])
     report("indexed $(id.uuid)")

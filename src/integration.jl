@@ -1,9 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Loads the REPL integration (`AutoloadsREPLExt`) once the first prompt is up,
-# not before it. On the REPL's evaluation thread, as loading packages from two
-# threads at once crashes Julia 1.13.
+# Loads the REPL extension once the first prompt is up, on the REPL's
+# evaluation thread: loading packages from two threads at once crashes Julia 1.13.
 
 const REPL_ID = Base.PkgId(Base.UUID("3fa0cd96-eef1-5676-8a61-b3b8758bbffb"), "REPL")
 # The extension's other trigger: a stdlib nothing else loads, used as a latch.
@@ -13,9 +12,8 @@ const PROMPT_POLL_S = 0.02
 """
     LazyIntegration(loading, repl)
 
-Runs the `loading` task once `repl` is at its first prompt (as a polling
-`Timer`'s callback), or when the first input arrives if that is sooner (as a
-REPL AST transform, which the integration's own then follows).
+Runs `loading` at `repl`'s first prompt (as a polling `Timer`'s callback) or
+its first input (as an AST transform), whichever comes first.
 """
 struct LazyIntegration <: Function
     loading::Task

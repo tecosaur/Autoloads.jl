@@ -1,27 +1,27 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Catalog records: what the package catalog knows about each package's
-# namespace, and their line-oriented serialisation. Depends only on Base so
-# that the standalone indexer script can include it.
+# Catalog records and their line format. Depends only on Base, for the indexer script.
 
 # What a name is bound to: a module, function, type or other value. A macro's name says as much.
 const NAME_KINDS = ".+:="
 
-"This session's Julia minor version, as records key it."
 const JULIA_MINOR = VersionNumber(VERSION.major, VERSION.minor)
 
-"A package `version` (`nothing` if it has none, as a built-in) seen on Julia minor version `julia`."
+"""
+    Sighting
+
+A package `version` (`nothing` for a built-in) seen on Julia minor `julia`.
+"""
 const Sighting = @NamedTuple{version::Union{VersionNumber, Nothing}, julia::VersionNumber}
 
 """
     PkgNames(id, at, exported, public, reexported; kinds = Dict(), origins = Dict())
 
-One namespace offered by package `id`, at each [`Sighting`](@ref) in `at`
-(sorted, nonempty). `exported` always includes the module's own name. Where
-known, `kinds` maps names other than macros to one of [`NAME_KINDS`](@ref),
-and `origins` re-exported names to the package owning them. Records for one
-`id` have disjoint `at`.
+One namespace of package `id`, seen at each of `at` (sorted, nonempty, and
+disjoint across the package's records). `exported` includes the module's own
+name; where known, `kinds` maps names to `NAME_KINDS`, and `origins`
+re-exported names to their owner.
 """
 struct PkgNames
     id::Base.PkgId
@@ -36,47 +36,25 @@ end
 PkgNames(id, at, exported, public, reexported; kinds = Dict{Symbol, Char}(), origins = Dict{Symbol, Base.PkgId}()) =
     PkgNames(id, at, exported, public, reexported, kinds, origins)
 
-"""
-    PkgFailure(id, at, message)
-
-Package `id` could not be loaded at [`Sighting`](@ref) `at`.
-"""
 struct PkgFailure
     id::Base.PkgId
-    at::Sighting
+    at::Vector{Sighting}
     message::String
 end
 
 const CatalogRecord = Union{PkgNames, PkgFailure}
 
-"Exit code of an indexer subprocess that was interrupted (shell convention, 128 + SIGINT)."
-const INTERRUPTED_EXIT_CODE = 130
+const INTERRUPTED_EXIT_CODE = 130  # 128 + SIGINT, as shells report an interrupted process
 
-Base.:(==)(a::PkgNames, b::PkgNames) =
-    a.id == b.id && a.at == b.at && same_namespace(a, b)
-
-Base.:(==)(a::PkgFailure, b::PkgFailure) =
-    a.id == b.id && a.at == b.at && a.message == b.message
-
-Base.hash(r::PkgNames, h::UInt) =
-    hash((r.id, r.at, r.exported, r.public, r.reexported, r.kinds, r.origins), hash(:PkgNames, h))
-
-Base.hash(r::PkgFailure, h::UInt) =
-    hash((r.id, r.at, r.message), hash(:PkgFailure, h))
+Base.:(==)(a::R, b::R) where {R <: CatalogRecord} = a.id == b.id && a.at == b.at && same_claim(a, b)
+Base.hash(r::CatalogRecord, h::UInt) = hash(r.at, hash(r.id, h))
 
 """
     extract_names(mod, id = Base.PkgId(mod)) -> PkgNames
 
-Collect the namespace `mod` offers, seen at its `pkgversion` on this Julia.
-Names defined in `mod` or its submodules are `exported` or `public`; names
-exported from other packages are `reexported`; names owned by `Base`/`Core`
-are skipped unless `mod` is itself part of `Base`. Undefined bindings and
-names containing whitespace are skipped.
-
-# Example
-```julia
-extract_names(Base.Threads, Base.PkgId(nothing, "Base.Threads")).exported
-```
+The namespace `mod` offers, seen at its `pkgversion` on this Julia. Names
+owned by `Base` or `Core` are skipped unless `mod` is part of `Base`, as are
+undefined bindings and names containing whitespace.
 """
 function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
     is_builtin = is_within(mod, Base)
@@ -108,39 +86,24 @@ end
 """
     merge_observation(existing, new) -> Vector{CatalogRecord}
 
-Return the records for one package after observing `new`, a [`PkgNames`](@ref)
-or a [`PkgFailure`](@ref). A `PkgNames` seen at several sightings is observed
-one sighting at a time, in order. The result is `existing` itself when a
-record already says the same about that sighting. Otherwise the sighting
-leaves whichever record held it (records left empty, and failures at that
-sighting, are dropped) and joins a record with an identical namespace, or
-`new` is appended.
+The records for one package after observing `new`, a sighting at a time: each
+sighting moves to a record saying the same (namespace or failure message), or
+`new` is appended, and records left without sightings go. `existing` itself
+when nothing changes.
 """
-function merge_observation(existing::Vector{CatalogRecord}, new::PkgNames)
+function merge_observation(existing::Vector{CatalogRecord}, new::CatalogRecord)
     # As a catalog file's records are: folding them in one sighting at a time only appends.
-    is_apart(record) = !any(sighting -> holds(record, sighting), new.at) &&
-        !(record isa PkgNames && same_namespace(record, new))
-    all(is_apart, existing) && return push!(copy(existing), new)
-    foldl(new.at; init = existing) do records, sighting
-        merge_single(records, with_sightings(new, [sighting]))
-    end
+    all(r -> isdisjoint(r.at, new.at) && !same_claim(r, new), existing) && return push!(copy(existing), new)
+    foldl((records, sighting) -> merge_sighting(records, new, sighting), new.at; init = existing)
 end
-
-merge_observation(existing::Vector{CatalogRecord}, new::PkgFailure) = merge_single(existing, new)
 
 """
     catalog_line(record) -> String
 
-Serialise `record` to one tab-separated line, the inverse of
-[`parse_catalog_line`](@ref). Sightings are written as `;`-separated groups
-of `,`-separated versions (`-` for none) seen on the same Julia minors, each
-followed by `@` and those minors as `+`-separated ranges, as in
-`1.0.0,1.1.0@1.12-14;1.2.0@1.14`. Each name but a macro's follows its kind
-(`?` if unknown); re-exported names follow a `/uuid/Name` token for their origin.
-
-# Raises
-`ArgumentError` if the id has no UUID or any name contains whitespace, since
-the line could not be parsed back.
+Serialise `record` as one tab-separated line. Sightings are written as in
+`1.0.0,1.1.0@1.12-14;1.2.0@1.14`, names after their kind (`?` if unknown), and
+re-exports after a `/uuid/Name` token for their origin. Throws `ArgumentError`
+for an id without a UUID or a name containing whitespace.
 """
 function catalog_line(record::PkgNames)
     join((id_fields(record.id)..., sightings_field(record.at), "ok",
@@ -148,14 +111,13 @@ function catalog_line(record::PkgNames)
 end
 
 function catalog_line(record::PkgFailure)
-    join((id_fields(record.id)..., sightings_field([record.at]), "failed", escape_message(record.message)), '\t')
+    join((id_fields(record.id)..., sightings_field(record.at), "failed", escape_message(record.message)), '\t')
 end
 
 """
     parse_catalog_line(line) -> Union{CatalogRecord, Nothing}
 
-Parse a line written by [`catalog_line`](@ref). Returns `nothing` for
-malformed lines and for ids without a UUID.
+The record `catalog_line` wrote as `line`, or `nothing` if it is malformed.
 """
 function parse_catalog_line(line::AbstractString)
     fields = split(line, '\t')
@@ -192,56 +154,38 @@ function parse_catalog_line(line::AbstractString)
             end
         end
         PkgNames(id, at, sets..., kinds, origins)
-    elseif fields[4] == "failed" && length(at) == 1
+    elseif fields[4] == "failed"
         message = unescape_message(join(fields[5:end], '\t'))
-        if message !== nothing PkgFailure(id, only(at), message) end
+        if message !== nothing PkgFailure(id, at, message) end
     end
 end
 
 # ── Helpers ──
 
-function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
-    sighting = observed_sighting(new)
-    any(r -> holds(r, sighting) && same_claim(r, new), existing) && return existing
+function merge_sighting(existing::Vector{CatalogRecord}, new::CatalogRecord, sighting::Sighting)
+    any(r -> sighting in r.at && same_claim(r, new), existing) && return existing
     merged = CatalogRecord[]
     for record in existing
-        stripped = without_sighting(record, sighting)
-        stripped === nothing || push!(merged, stripped)
+        rest = filter(!=(sighting), record.at)
+        isempty(rest) || push!(merged, with_sightings(record, rest))
     end
-    twin = if new isa PkgNames findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) end
+    twin = findfirst(r -> same_claim(r, new), merged)
     if twin === nothing
-        push!(merged, new)
+        push!(merged, with_sightings(new, [sighting]))
     else
-        record = merged[twin]
-        merged[twin] = with_sightings(record, sort!(vcat(record.at, new.at); by = sighting_order))
+        merged[twin] = with_sightings(merged[twin], sort!(push!(copy(merged[twin].at), sighting); by = sighting_order))
     end
     merged
 end
 
-same_namespace(a::PkgNames, b::PkgNames) =
+same_claim(a::PkgNames, b::PkgNames) =
     a.exported == b.exported && a.public == b.public && a.reexported == b.reexported && a.kinds == b.kinds &&
     a.origins == b.origins
-
-with_sightings(record::PkgNames, at::Vector{Sighting}) =
-    PkgNames(record.id, at, record.exported, record.public, record.reexported, record.kinds, record.origins)
-
-same_claim(a::PkgNames, b::PkgNames) = same_namespace(a, b)
 same_claim(a::PkgFailure, b::PkgFailure) = a.message == b.message
 same_claim(::CatalogRecord, ::CatalogRecord) = false
 
-observed_sighting(record::PkgNames) = only(record.at)
-observed_sighting(record::PkgFailure) = record.at
-
-holds(record::PkgNames, sighting::Sighting) = sighting in record.at
-holds(record::PkgFailure, sighting::Sighting) = record.at == sighting
-
-without_sighting(record::PkgFailure, sighting::Sighting) = if record.at != sighting record end
-
-function without_sighting(record::PkgNames, sighting::Sighting)
-    holds(record, sighting) || return record
-    remaining = filter(!=(sighting), record.at)
-    if !isempty(remaining) with_sightings(record, remaining) end
-end
+with_sightings(r::PkgNames, at::Vector{Sighting}) = PkgNames(r.id, at, r.exported, r.public, r.reexported, r.kinds, r.origins)
+with_sightings(r::PkgFailure, at::Vector{Sighting}) = PkgFailure(r.id, at, r.message)
 
 # No version sorts before any.
 version_order(version::Union{VersionNumber, Nothing}) = (version !== nothing, something(version, v"0"))
@@ -265,7 +209,6 @@ function sightings_field(at::Vector{Sighting})
     join(groups, ';')
 end
 
-"Sorted Julia minors as `+`-separated runs of consecutive minors, as in `1.10+1.12-14`."
 function julia_ranges(minors::Vector{VersionNumber})
     precedes(a, b) = a !== nothing && b !== nothing && a.major == b.major && a.minor + 1 == b.minor
     io = IOBuffer()
@@ -325,12 +268,11 @@ end
 
 function name_list(names::Set{Symbol}, kinds::Dict{Symbol, Char})
     strings = sort!(string.(names))
-    any(s -> any(isspace, s), strings) &&
-        throw(ArgumentError("cannot write catalog line: names $(filter(s -> any(isspace, s), strings)) contain whitespace"))
+    spaced = filter(s -> any(isspace, s), strings)
+    isempty(spaced) || throw(ArgumentError("cannot write catalog line: names $spaced contain whitespace"))
     join((if startswith(name, '@') name else get(kinds, Symbol(name), '?') * name end for name in strings), ' ')
 end
 
-"The re-exported names of `record`, those of known origin after a `/uuid/Name` token for it."
 function reexport_list(record::PkgNames)
     by_origin = Dict{Union{Base.PkgId, Nothing}, Set{Symbol}}()
     for name in record.reexported

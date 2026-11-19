@@ -1,15 +1,9 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Pkg operations on the global autoloads environment, run by `Autoloads.add`,
-# `remove` and `update` as
+# Run by `Autoloads.add`, `remove` and `update` as
 #
 #     julia --project=<env> pkg.jl <add|remove|update|resolve> <package>...
-#
-# `add` develops the paths of existing directories and adds the rest from
-# their git URL (`url#rev` for a revision) or by name; `update` updates every
-# package of the workspace when given none. A Pkg or resolver error is
-# printed without a backtrace and exits 1.
 
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
 

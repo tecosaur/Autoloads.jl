@@ -5,7 +5,7 @@
 module TestManage
 
 using Test, REPL, Future, Autoloads
-using Autoloads: PkgNames, PkgFailure, PkgOperationFailed, MemberMissing, read_catalog,
+using Autoloads: PkgNames, PkgFailure, read_catalog,
     write_catalog_changes!, project_deps
 
 include("setup.jl")
@@ -204,8 +204,7 @@ member_names(member) = sort!([id.name for id in project_deps(joinpath(member, "P
         catch err
             err
         end
-        @test err isa PkgOperationFailed && err.op === :init && err.env == env.global_dir
-        @test occursin(env.global_dir, sprint(showerror, err))
+        @test err isa ErrorException && startswith(err.msg, "Autoloads.init failed in $(env.global_dir):")
         @test read(project_file) == bytes
         @test !ispath(joinpath(env.global_dir, "autoloads"))
         @test readdir(env.global_dir) == ["Project.toml"]
@@ -237,7 +236,7 @@ end
             write_catalog_changes!(catalog, Autoloads.CatalogRecord[
                 PkgNames(FIXTURE_A, here(v"0.1.0"), Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                          Set([:fa_public]), Set{Symbol}()),
-                PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "FixtureC failed to load\nStacktrace: ...")])
+                PkgFailure(FIXTURE_C, here(v"0.1.0"), "FixtureC failed to load\nStacktrace: ...")])
             text = status_text()
             @test occursin(r"✓ FixtureA +v0\.1\.0 +4 exports, 1 public\n", text)
             @test occursin(r"✗ FixtureC +v0\.1\.0 +failed: FixtureC failed to load\n", text)
@@ -327,9 +326,7 @@ end
             catch err
                 err
             end
-            @test err isa PkgOperationFailed && err.op === :remove && err.pkgs == ["NotAPackage"]
-            @test occursin("NotAPackage", sprint(showerror, err))
-            @test occursin(ws.member, sprint(showerror, err))
+            @test err isa ErrorException && startswith(err.msg, "Autoloads.remove failed for NotAPackage in $(ws.member):")
             @test notified[] == 5
             @testset "a partly failed add still notifies" begin
                 err = try
@@ -338,17 +335,16 @@ end
                 catch err
                     err
                 end
-                @test err isa PkgOperationFailed && err.op === :add
+                @test err isa ErrorException && startswith(err.msg, "Autoloads.add failed")
                 @test member_names(ws.member) == ["FixtureA", "FixtureC"]
                 @test notified[] == 6
             end
             missing_member = (; global_dir = mktempdir(), catalog)
             @testset "names as separate arguments" begin
-                @test_throws MemberMissing Autoloads.remove("FixtureA"; missing_member.global_dir)
-                @test_throws MemberMissing Autoloads.update("FixtureA"; missing_member.global_dir)
+                @test_throws r"no autoloads environment.*autoloads init" Autoloads.remove("FixtureA"; missing_member.global_dir)
+                @test_throws r"no autoloads environment.*autoloads init" Autoloads.update("FixtureA"; missing_member.global_dir)
                 @test_throws ArgumentError Autoloads.add(; missing_member...)
             end
-            @test occursin("autoloads init", sprint(showerror, MemberMissing(Autoloads.member_dir(missing_member.global_dir))))
         end
     finally
         Autoloads.ENV_CHANGED[] = nothing

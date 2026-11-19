@@ -1,20 +1,27 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Configuration: the merged `[preferences.Autoloads]` dict parsed into typed
-# settings. `parse_config` is pure; `load_config` is the only preferences read.
+# `[preferences.Autoloads]` parsed into typed settings.
 
-"When package precompilation happens."
+"""
+    PrecompilePolicy
+
+When package precompilation happens.
+"""
 @enum PrecompilePolicy Background Lazy
 
-"Which of a package's bindings are made available: every one, or those used."
+"""
+    Bindings
+
+Which of a package's bindings are made available: all, or those used.
+"""
 @enum Bindings AllBindings UsedBindings
 
 """
     PackageConfig(skip, only, bindings)
 
 Per-package overrides. `only === nothing` means no restriction and
-`bindings === nothing` inherits [`Config`](@ref)'s setting.
+`bindings === nothing` inherits `Config`'s setting.
 """
 struct PackageConfig
     skip::Set{Symbol}
@@ -25,10 +32,8 @@ end
 """
     Config(stdlib, project, policy, bindings, log, up_hook, packages)
 
-Typed autoload settings. `project === nothing` means every direct dependency
-of the project (and the project itself, when a package); an empty set means none. `log` is whether each autoload is
-announced, `up_hook` whether `pkg> up` in the global environment also updates the
-autoload packages. `packages` maps package names to their [`PackageConfig`](@ref).
+Typed autoload settings. `project === nothing` selects every dependency of the
+active project (and the project itself, if a package).
 """
 struct Config
     stdlib::Bool
@@ -43,8 +48,7 @@ end
 """
     ConfigError(keypath, expected, found)
 
-A preference at `keypath` (e.g. `["packages", "DataFrames", "skip"]`) was
-not `expected`; `found` is the offending value.
+The preference at `keypath` should have been `expected`, but was `found`.
 """
 struct ConfigError <: Exception
     keypath::Vector{String}
@@ -67,11 +71,8 @@ const BINDINGS_NAMES = Dict("all" => AllBindings, "used" => UsedBindings)
 """
     parse_config(prefs::AbstractDict) -> Config
 
-Parse merged preferences (as parsed TOML) into a [`Config`](@ref). Missing
-keys take their defaults: `stdlib = true`, `project = true`,
-`precompile = "background"`, `bindings = "all"`, `log = false`, `up_hook = true`.
-
-Throws [`ConfigError`](@ref) for unknown keys or values of the wrong shape.
+Parse merged preferences into a `Config`, filling in defaults. Throws
+`ConfigError` for unknown keys or values of the wrong shape.
 """
 function parse_config(prefs::AbstractDict)
     prefs = as_table(prefs)
@@ -86,35 +87,19 @@ function parse_config(prefs::AbstractDict)
         parse_packages(get(prefs, "packages", Dict{String, Any}())))
 end
 
-"""
-    load_config() -> Config
-
-Read the merged `[preferences.Autoloads]` and parse it with [`parse_config`](@ref).
-"""
 load_config() = parse_config(Base.get_preferences(Base.PkgId(@__MODULE__).uuid))
 
-"""
-    package_config(cfg::Config, name::AbstractString) -> PackageConfig
-
-The overrides for package `name`, or empty overrides if none are configured.
-"""
 package_config(cfg::Config, name::AbstractString) =
     get(cfg.packages, String(name), PackageConfig(Set{Symbol}(), nothing, nothing))
 
-"""
-    bindings_for(cfg::Config, name::AbstractString) -> Bindings
-
-The bindings setting for package `name`: its override, else the global one.
-"""
 bindings_for(cfg::Config, name::AbstractString) =
     something(package_config(cfg, name).bindings, cfg.bindings)
 
 """
     autoload_names(record::PkgNames, config::PackageConfig) -> Set{Symbol}
 
-Names to autoload unqualified: exported and reexported names, restricted to
-`only` if set, minus `skip`. The module's own name is always kept;
-public-only names are never included.
+The names to autoload unqualified: exported and re-exported names, narrowed by
+`config`, and the module's own name.
 """
 function autoload_names(record::PkgNames, config::PackageConfig)
     names = record.exported ∪ record.reexported
@@ -130,7 +115,7 @@ as_table(@nospecialize(table::AbstractDict)) =
 
 function check_keys(dict::Dict{String, Any}, valid::Vector{String}, keypath::Vector{String})
     for key in keys(dict)
-        key in valid || throw(ConfigError([keypath; string(key)],
+        key in valid || throw(ConfigError(push!(copy(keypath), string(key)),
             "one of " * join(map(k -> "`$k`", valid), ", "), key))
     end
 end
@@ -145,7 +130,7 @@ function parse_choice(dict::Dict{String, Any}, key::String, choices::Dict, defau
     haskey(dict, key) || return default
     value = dict[key]
     (value isa AbstractString && haskey(choices, value)) ||
-        throw(ConfigError([keypath; key], join(map(repr, sort!(collect(keys(choices)))), " or "), value))
+        throw(ConfigError(push!(copy(keypath), key), join(map(repr, sort!(collect(keys(choices)))), " or "), value))
     choices[value]
 end
 
@@ -164,18 +149,14 @@ end
 
 function parse_packages(@nospecialize(value))
     value isa AbstractDict || throw(ConfigError(["packages"], "a table of package settings", value))
-    packages = Dict{String, PackageConfig}()
-    for (name, settings) in as_table(value)
-        packages[name] = parse_package(settings, ["packages", name])
-    end
-    packages
+    Dict{String, PackageConfig}(name => parse_package(settings, ["packages", name]) for (name, settings) in as_table(value))
 end
 
 function parse_package(@nospecialize(settings), keypath::Vector{String})
     settings isa AbstractDict || throw(ConfigError(keypath, "a table with keys `skip`, `only`, `bindings`", settings))
     table = as_table(settings)
     check_keys(table, PACKAGE_KEYS, keypath)
-    names(key) = Set{Symbol}(map(Symbol, parse_names(table[key], [keypath; key])))
+    names(key) = Set{Symbol}(map(Symbol, parse_names(table[key], push!(copy(keypath), key))))
     skip = if haskey(table, "skip") names("skip") else Set{Symbol}() end
     only = if haskey(table, "only") names("only") else nothing end
     PackageConfig(skip, only, parse_choice(table, "bindings", BINDINGS_NAMES, nothing; keypath))

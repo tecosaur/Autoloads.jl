@@ -2,19 +2,12 @@
 # SPDX-License-Identifier: MPL-2.0
 
 """
-Autoloads: load packages on demand at the REPL.
-
-Management commands, also available as the `pkg> autoloads` command group:
-[`init`](@ref) sets up the global autoloads environment; [`add`](@ref),
-[`remove`](@ref) and [`update`](@ref) change its packages; [`status`](@ref)
-reports what autoloads. They raise [`PkgOperationFailed`](@ref),
-[`MemberMissing`](@ref), [`CatalogTooNew`](@ref) and, for invalid settings,
-[`ConfigError`](@ref).
-Everything else is internal.
+Load packages on demand at the REPL. Manage them with `init`, `add`, `remove`,
+`update` and `status`, or the `pkg> autoloads` commands.
 """
 module Autoloads
 
-public init, add, remove, update, status, PkgOperationFailed, MemberMissing, CatalogTooNew, ConfigError
+public init, add, remove, update, status, CatalogTooNew, ConfigError
 
 include("records.jl")
 include("catalogfile.jl")

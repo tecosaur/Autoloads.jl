@@ -16,7 +16,7 @@ names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Sym
              Set(public), Set(reexported);
              origins = Dict{Symbol, Base.PkgId}(name => origin for name in reexported if origin !== nothing))
 
-failure_for(id, version; julia = JULIA_MINOR) = PkgFailure(id, (; version, julia), "boom")
+failure_for(id, version; julia = JULIA_MINOR) = PkgFailure(id, Sighting[(; version, julia)], "boom")
 
 # Neither stdlibs nor the project autoload unless a test asks.
 cfg_of(; kwargs...) = parse_config(Dict{String, Any}("stdlib" => false, "project" => false,
