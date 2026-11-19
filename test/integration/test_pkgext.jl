@@ -98,6 +98,27 @@ end
                 Base.set_active_project(joinpath(Autoloads.global_env_dir(), "Project.toml"))
                 PACKAGE_SPECS["up"].api()
                 @test workspace[]
+                @testset "but not when the settings are invalid" begin
+                    depot = mktempdir()
+                    # Created first, so that `global_env_dir` picks it over the user's.
+                    global_project = joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)", "Project.toml")
+                    mkpath(dirname(global_project))
+                    write(global_project, """
+                        [deps]
+                        Autoloads = "$(Base.PkgId(Autoloads).uuid)"
+
+                        [preferences.Autoloads]
+                        up_hook = "no"
+                        """)
+                    pushfirst!(DEPOT_PATH, depot)
+                    try
+                        Base.set_active_project(global_project)
+                        @test_logs (:warn, r"settings are invalid") PACKAGE_SPECS["up"].api()
+                        @test !workspace[]
+                    finally
+                        popfirst!(DEPOT_PATH)
+                    end
+                end
             finally
                 Base.set_active_project(active)
             end

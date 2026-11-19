@@ -123,9 +123,9 @@ end
 Make each of [`ENV_CHANGING_COMMANDS`](@ref) call `Autoloads.notify_env_change()` after
 its `api` succeeds, under every alias, and `up` also update the autoload packages
 (as `--workspace` does) when the global environment is active, unless the `up_hook`
-setting is off. Idempotent; commands already wrapped by this function, and other
-wrappers on any command, are left to coexist. Warns and changes nothing if Pkg's
-`CommandSpec` or `SPECS` are not as expected.
+setting is off or the settings are invalid. Idempotent; commands already wrapped
+by this function, and other wrappers on any command, are left to coexist. Warns
+and changes nothing if Pkg's `CommandSpec` or `SPECS` are not as expected.
 """
 function wrap_pkg_commands!()
     specs = find_package_specs()
@@ -134,8 +134,16 @@ function wrap_pkg_commands!()
         return
     end
     up = specs["up"]
-    with_autoloads() = Base.active_project() == joinpath(Autoloads.global_env_dir(), "Project.toml") &&
-        Autoloads.load_config().up_hook
+    function with_autoloads()
+        Base.active_project() == joinpath(Autoloads.global_env_dir(), "Project.toml") || return false
+        try
+            Autoloads.load_config().up_hook
+        catch err
+            err isa ConfigError || rethrow()
+            @warn "The Autoloads settings are invalid, so `up` leaves the autoload packages alone" exception = err
+            false
+        end
+    end
     for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
         original.api isa RefreshingApi && continue
         api = RefreshingApi(if original === up
