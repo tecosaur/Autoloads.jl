@@ -46,11 +46,13 @@ try
             parse_config(Dict{String, Any}("project" => ["Workload"], "packages" => Dict{String, Any}(
                 "Workload" => Dict{String, Any}("skip" => ["wl"], "only" => ["wp"], "bindings" => "used"))))
             worker = Worker(Runtime(Channel{Event}(Inf), member, joinpath(dir, "catalog")), Indexer())
-            # The user's settings are read, and may not suit this member.
-            Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
-                derive_session(worker)
-                maintain_environment!(worker)
-                observe!(worker, [Base.PkgId(Autoloads)])
+            # The user's settings are read, and may not suit this member; their state is not.
+            withenv("XDG_STATE_HOME" => dir) do
+                Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+                    derive_session(worker)
+                    maintain_environment!(worker)
+                    observe!(worker, [Base.PkgId(Autoloads)])
+                end
             end
             provider_hint(:wl, catalog, member)
         end

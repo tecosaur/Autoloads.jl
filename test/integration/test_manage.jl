@@ -400,6 +400,20 @@ end
     end
 end
 
+@testset "the REPL extension's precompile workload leaves deferred changes alone" begin
+    Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
+    Autoloads.defer!(VERSION, "resolve")
+    deferred_file = joinpath(Autoloads.state_dir(), Autoloads.DEFERRED_FILE)
+    try
+        withenv("JULIA_PKG_OFFLINE" => "true") do
+            Base.include(Ext, joinpath(AUTOLOADS_DIR, "ext", "AutoloadsREPLExt", "workload.jl"))
+        end
+        @test readlines(deferred_file) == ["resolve"]
+    finally
+        rm(deferred_file; force = true)
+    end
+end
+
 @testset "adopting an older version's environment" begin
     env = fresh_global_env("""
         [deps]
