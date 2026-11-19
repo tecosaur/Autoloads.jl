@@ -57,7 +57,7 @@ function read_healed_catalog(path::AbstractString)
     malformed == 0 && return records
     try
         # Under the lock, a line still being appended is not taken for torn.
-        with_catalog_lock(path) do
+        with_file_lock(path) do
             locked_records, locked_malformed = parse_catalog_file(path)
             if locked_malformed > 0
                 rewrite_catalog(path, group_by_id(locked_records))
@@ -73,12 +73,12 @@ function read_healed_catalog(path::AbstractString)
 end
 
 """
-    with_catalog_lock(f, path)
+    with_file_lock(f, path)
 
-Run `f()` holding the exclusive lock for the catalog at `path`, and return its
+Run `f()` holding the exclusive lock for the file at `path`, and return its
 result. Locks left by dead processes, or older than $(LOCK_STALE_AGE_S) s, are stolen.
 """
-function with_catalog_lock(f, path::AbstractString)
+function with_file_lock(f, path::AbstractString)
     mkpath(dirname(path))
     pidfile = Base.require(FILEWATCHING_ID).Pidfile
     Base.invokelatest(pidfile.mkpidlock, f, path * ".pid"; stale_age = LOCK_STALE_AGE_S)
@@ -94,7 +94,7 @@ ids are appended, and any other change rewrites the file atomically, as does
 removing malformed lines (with a warning).
 """
 function write_catalog_changes!(path::AbstractString, observations::Vector{CatalogRecord})
-    with_catalog_lock(path) do
+    with_file_lock(path) do
         parsed, malformed = parse_catalog_file(path)
         file_records = group_by_id(parsed)
         merged = copy(file_records)
@@ -123,7 +123,7 @@ the file was written: nothing is written when it has no such failure.
 function clear_failures!(path::AbstractString, ids)
     is_cleared(r) = r isa PkgFailure && r.id in ids
     any(is_cleared, read_catalog(path)) || return false
-    with_catalog_lock(path) do
+    with_file_lock(path) do
         records = first(parse_catalog_file(path))
         any(is_cleared, records) || return false
         rewrite_catalog(path, group_by_id(filter(!is_cleared, records)))

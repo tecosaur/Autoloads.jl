@@ -398,6 +398,18 @@ end
             @test isempty(deferred(VERSION))
             @test !Autoloads.apply_deferred!(ws.global_env; output)
         end
+        @testset "changes deferred while applying are kept" begin
+            path = joinpath(Autoloads.state_dir(), Autoloads.DEFERRED_FILE)
+            Autoloads.defer!(VERSION, "resolve")
+            applied = read(path, String)
+            Autoloads.defer!(VERSION, "update", ["FixtureC"])
+            Autoloads.drop_applied!(path, applied)
+            @test deferred(VERSION) == ["update FixtureC"]
+            Autoloads.drop_applied!(path, read(path, String))
+            @test !isfile(path)
+            Autoloads.drop_applied!(path, applied)
+            @test !isfile(path)
+        end
     finally
         rm(Autoloads.state_dir(next_version); recursive = true, force = true)
     end

@@ -284,18 +284,24 @@ deferring a resolve to each version whose member it changes.
 """
 function spread!(op::Symbol, global_dir::AbstractString, names::Vector{String})
     source = member_dir(global_dir)
-    targets = [(member.dir, joinpath(state_dir(member.version), DEFERRED_FILE))
-               for member in version_members(global_dir) if member.dir != source]
+    targets = [member for member in version_members(global_dir) if member.dir != source]
     isempty(targets) && return
-    run_pkg_subprocess(op, names, `$(joinpath(SCRIPTS_DIR, "spread.jl")) $op $source $(join(names, ',')) \
-                                   $(collect(Iterators.flatten(targets)))`; project = source)
+    project_text(member) = read(joinpath(member.dir, "Project.toml"), String)
+    before = map(project_text, targets)
+    try
+        run_pkg_subprocess(op, names, `$(joinpath(SCRIPTS_DIR, "spread.jl")) $op $source $(join(names, ',')) \
+                                       $([member.dir for member in targets])`; project = source)
+    finally
+        for (member, text) in zip(targets, before)
+            project_text(member) == text || defer!(member.version, "resolve")
+        end
+    end
 end
 
 "Defer `op` (`resolve`, or `update` of `pkgs`, all when empty) on Julia `version`'s autoloads environment."
 function defer!(version::VersionNumber, op::AbstractString, pkgs::Vector{String} = String[])
     path = joinpath(state_dir(version), DEFERRED_FILE)
-    mkpath(dirname(path))
-    open(io -> println(io, join([op; pkgs], ' ')), path, "a")
+    with_file_lock(() -> open(io -> println(io, join([op; pkgs], ' ')), path, "a"), path)
 end
 
 """
@@ -310,7 +316,7 @@ Raises [`PkgOperationFailed`](@ref), leaving the deferred changes in place.
 function apply_deferred!(global_dir::AbstractString; output::IO = stdout)
     path = joinpath(state_dir(), DEFERRED_FILE)
     isfile(path) || return false
-    content = read(path, String)
+    content = with_file_lock(() -> read(path, String), path)
     requests = split.(split(content, '\n'; keepempty = false))
     updates = [String.(request[2:end]) for request in requests if first(request) == "update"]
     if isempty(updates)
@@ -319,9 +325,18 @@ function apply_deferred!(global_dir::AbstractString; output::IO = stdout)
         pkgs = if any(isempty, updates) String[] else unique!(reduce(vcat, updates)) end
         run_pkg_operation(:update, pkgs, pkgs, global_dir; output)
     end
-    read(path, String) == content && rm(path)
+    drop_applied!(path, content)
     notify_env_change()
     true
+end
+
+"Remove `applied` from the start of the deferred file at `path`, keeping lines appended since."
+function drop_applied!(path::AbstractString, applied::AbstractString)
+    with_file_lock(path) do
+        isfile(path) || return
+        rest = chopprefix(read(path, String), applied)
+        if isempty(rest) rm(path) else write(path, rest) end
+    end
 end
 
 """

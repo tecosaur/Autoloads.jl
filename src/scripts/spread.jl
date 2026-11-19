@@ -4,13 +4,13 @@
 # Copying packages to, or removing them from, the autoloads members of other
 # Julia versions, run by `Autoloads.add` and `remove` with `all_versions` as
 #
-#     julia spread.jl <add|remove> <source member> <names, comma-separated> [<member> <deferred file>]...
+#     julia spread.jl <add|remove> <source member> <names, comma-separated> <member>...
 #
 # `add` gives each member the source member's `[deps]`, `[compat]` and
 # `[sources]` entries of the packages (a source its manifest records, before
-# Pkg 1.13, counts); `remove` deletes theirs. Nothing is resolved: each
-# member changed gets a `resolve` line in its deferred file, for its own
-# Julia version to apply when it next starts a session.
+# Pkg 1.13, counts); `remove` deletes theirs. Nothing is resolved: `spread!`
+# defers a resolve to each member changed, for its own Julia version to apply
+# when it next starts a session.
 
 const TOML = Base.require(Base.PkgId(Base.UUID("fa267f1f-6049-4f14-aa54-33bafae1ed76"), "TOML"))
 
@@ -36,7 +36,7 @@ function main(op, source_dir, names, targets)
         end
     end
     done, to = if op == "add"; ("Added ", " to ") else ("Removed ", " from ") end
-    for (member, deferred) in targets
+    for member in targets
         project_file = joinpath(member, "Project.toml")
         project = TOML.parsefile(project_file)
         is_changed = false
@@ -54,10 +54,8 @@ function main(op, source_dir, names, targets)
         is_changed || continue
         filter!(((key, value),) -> !(key in SECTIONS && isempty(value)), project)
         write_toml(project_file, project)
-        mkpath(dirname(deferred))
-        open(io -> println(io, "resolve"), deferred, "a")
         println(done, join(names, ", "), to, project_file)
     end
 end
 
-main(ARGS[1], ARGS[2], split(ARGS[3], ','), collect(Iterators.partition(ARGS[4:end], 2)))
+main(ARGS[1], ARGS[2], split(ARGS[3], ','), ARGS[4:end])
