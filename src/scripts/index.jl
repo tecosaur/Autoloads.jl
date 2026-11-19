@@ -7,11 +7,11 @@
 #     julia --project=<env> index.jl <lazy|background> <catalog path> <uuid=name=version>...
 #
 # with `-` for an unknown version. Progress goes to stdout for the supervisor:
-# `indexing <uuid>` before loading each package, and `precompiling start` /
-# `precompiling done` around the precompile phase. If another indexer holds
-# the catalog's `.indexing` lock, exits 0 without printing any of these.
-# Interruption exits with INTERRUPTED_EXIT_CODE so the supervisor can tell it
-# from a crash.
+# `indexing <uuid>` before loading each package, `indexed <uuid>` once its
+# record is written, and `precompiling start` / `precompiling done` around the
+# precompile phase. If another indexer holds the catalog's `.indexing` lock,
+# exits 0 without printing any of these. Interruption exits with
+# INTERRUPTED_EXIT_CODE so the supervisor can tell it from a crash.
 
 include(joinpath(@__DIR__, "..", "records.jl"))
 include(joinpath(@__DIR__, "..", "catalogfile.jl"))
@@ -72,6 +72,7 @@ function index_package(path, id::Base.PkgId, version::Union{VersionNumber, Nothi
         PkgFailure(id, version, first(sprint(showerror, err), MAX_MESSAGE_CHARS))
     end
     write_catalog_changes!(path, CatalogRecord[record])
+    report("indexed $(id.uuid)")
 end
 
 # Loading wraps an interrupt in `LoadError`/`InitError`.

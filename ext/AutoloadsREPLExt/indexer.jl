@@ -76,8 +76,8 @@ end
 """
     exit_failure(in_progress, exitcode, termsignal, timed_out, timeout_s) -> Union{PkgFailure, Nothing}
 
-The failure to record for `in_progress` (the `id => version` last announced,
-or `nothing`) given how the indexer exited.
+The failure to record for `in_progress` (the `id => version` announced and
+not yet recorded, or `nothing`) given how the indexer exited.
 """
 function exit_failure(in_progress, exitcode::Integer, termsignal::Integer, timed_out::Bool, timeout_s::Integer)
     in_progress === nothing && return nothing
@@ -134,17 +134,21 @@ function supervise(process::Base.Process, pid::Integer, output::Pipe, path, want
     end
     in_progress = nothing
     try
-        # Armed only by `indexing` lines, so startup and precompilation never count.
+        # Armed from `indexing` to `indexed`, so startup, precompilation and exit never count.
         log_path = path * ".log"
         open(log_path, if filesize(log_path) > LOG_MAX_BYTES "w" else "a" end) do log
             for line in eachline(output)
                 println(log, line)
                 flush(log)
-                startswith(line, "indexing ") || continue
-                uuid = tryparse(Base.UUID, chopprefix(line, "indexing "))
-                haskey(by_uuid, uuid) || continue
-                in_progress = by_uuid[uuid]
-                arm!()
+                if startswith(line, "indexing ")
+                    uuid = tryparse(Base.UUID, chopprefix(line, "indexing "))
+                    haskey(by_uuid, uuid) || continue
+                    in_progress = by_uuid[uuid]
+                    arm!()
+                elseif in_progress !== nothing && line == "indexed $(first(in_progress).uuid)"
+                    in_progress = nothing
+                    disarm!()
+                end
             end
             disarm!()
             wait(process)

@@ -108,6 +108,12 @@ end
         @test isempty(records_of(path, FIXTURE_B))
         @test !ispath(path * ".indexing")
     end
+    @testset "a failed exit after the last package records no failure" begin
+        (; path, changed) = run_indexer(ix, Lazy, [FIXTURE_C]; env = ("FIXTUREC_EXIT_CRASH" => "1",))
+        @test changed
+        @test occursin("exited with code 3", log_of(path))
+        @test only(records_of(path, FIXTURE_C)) isa PkgNames
+    end
     @testset "one run at a time; an interrupted run records nothing" begin
         pending = start_run(ix, Lazy, [FIXTURE_C]; env = ("FIXTUREC_HANG" => "1",))
         timedwait(() -> occursin("indexing $(FIXTURE_C.uuid)", log_of(pending.path)), INDEXER_WAIT_S) === :ok ||
