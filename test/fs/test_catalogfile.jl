@@ -2,15 +2,18 @@
 # SPDX-License-Identifier: MPL-2.0
 
 using Test, Autoloads
-using Autoloads: CatalogRecord, PkgNames, PkgFailure, catalog_line, read_catalog, write_catalog_changes!, build_catalog,
-    clear_failures!, read_healed_catalog
+using Autoloads: CatalogRecord, PkgNames, PkgFailure, Sighting, JULIA_MINOR, CatalogTooNew, catalog_line, read_catalog,
+    write_catalog_changes!, build_catalog, clear_failures!, read_healed_catalog
 
 const CATALOG_UUID_A = Base.UUID("00000000-0000-0000-0000-0000000000b1")
 const CATALOG_UUID_B = Base.UUID("00000000-0000-0000-0000-0000000000b2")
 const HEADER = Autoloads.CATALOG_HEADER * "\n"
 
-catalog_names(uuid, name, version, exported...) =
-    PkgNames(Base.PkgId(uuid, name), [version], Set(Symbol.(exported)), Set{Symbol}(), Set{Symbol}())
+"Sightings of `versions` on this Julia minor."
+here(versions...) = Sighting[(; version, julia = JULIA_MINOR) for version in versions]
+
+catalog_names(uuid, name, version, exported...; julia = JULIA_MINOR) =
+    PkgNames(Base.PkgId(uuid, name), Sighting[(; version, julia)], Set(Symbol.(exported)), Set{Symbol}(), Set{Symbol}())
 
 @testset "catalog file" begin
     @testset "read and write" begin
@@ -34,13 +37,27 @@ catalog_names(uuid, name, version, exported...) =
             @test write_catalog_changes!(path, CatalogRecord[a2])
             records = read_catalog(path)
             @test count(r -> r.id.uuid == CATALOG_UUID_A, records) == 1
-            @test only(filter(r -> r.id.uuid == CATALOG_UUID_A, records)).versions == [v"1.0.0", v"1.1.0"]
+            @test only(filter(r -> r.id.uuid == CATALOG_UUID_A, records)).at == here(v"1.0.0", v"1.1.0")
             @test b1 in records
             # changed names at a new version give a second line for the id
             a3 = catalog_names(CATALOG_UUID_A, "A", v"1.2.0", :A, :g)
             @test write_catalog_changes!(path, CatalogRecord[a3])
             @test count(r -> r.id.uuid == CATALOG_UUID_A, read_catalog(path)) == 2
             @test !isfile(path * ".tmp-$(getpid())")
+        end
+    end
+
+    @testset "Julia minors share the file" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog")
+            here_a = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A, :f)
+            older_a = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A, :f; julia = v"1.0")
+            write_catalog_changes!(path, CatalogRecord[here_a])
+            @test write_catalog_changes!(path, CatalogRecord[older_a])
+            @test only(read_catalog(path)).at == [only(older_a.at); only(here_a.at)]
+            failed = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), only(older_a.at), "boom")
+            @test write_catalog_changes!(path, CatalogRecord[failed])
+            @test Set(read_catalog(path)) == Set(CatalogRecord[here_a, failed])
         end
     end
 
@@ -51,8 +68,8 @@ catalog_names(uuid, name, version, exported...) =
             @test !clear_failures!(path, [a])
             @test !ispath(dirname(path))
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
-            failures = CatalogRecord[PkgFailure(a, v"1.1.0", "boom"), PkgFailure(a, nothing, "?"),
-                                     PkgFailure(b, v"2.0.0", "bang")]
+            failures = CatalogRecord[PkgFailure(a, only(here(v"1.1.0")), "boom"), PkgFailure(a, only(here(nothing)), "?"),
+                                     PkgFailure(b, only(here(v"2.0.0")), "bang")]
             write_catalog_changes!(path, CatalogRecord[a1; failures])
             before = read(path)
             @test !clear_failures!(path, [Base.PkgId(CATALOG_UUID_A, "Other")])
@@ -67,16 +84,16 @@ catalog_names(uuid, name, version, exported...) =
         mktempdir() do dir
             path = joinpath(dir, "catalog")
             a1 = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
-            fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), v"3.0.0", "boom")
+            fail = PkgFailure(Base.PkgId(CATALOG_UUID_A, "A"), only(here(v"3.0.0")), "boom")
             b1 = catalog_names(CATALOG_UUID_B, "B", v"1.0.0", :B)
             @test write_catalog_changes!(path, CatalogRecord[a1, fail, b1])
             @test write_catalog_changes!(path, CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"2.0.0", :A)])
             records = read_catalog(path)
-            @test any(r -> r isa PkgNames && length(r.versions) > 1, records)
+            @test any(r -> r isa PkgNames && length(r.at) > 1, records)
             catalog = build_catalog(records)
             @test Set(catalog.records[Base.PkgId(CATALOG_UUID_A, "A")]) ==
                 Set(CatalogRecord[catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A) |>
-                    r -> PkgNames(r.id, [v"1.0.0", v"2.0.0"], r.exported, r.public, r.reexported), fail])
+                    r -> PkgNames(r.id, here(v"1.0.0", v"2.0.0"), r.exported, r.public, r.reexported), fail])
             @test catalog.records[Base.PkgId(CATALOG_UUID_B, "B")] == CatalogRecord[b1]
         end
     end
@@ -124,6 +141,22 @@ catalog_names(uuid, name, version, exported...) =
         end
     end
 
+    @testset "a newer format is left untouched" begin
+        mktempdir() do dir
+            path = joinpath(dir, "catalog")
+            content = "Autoloads catalog v$(Autoloads.CATALOG_FORMAT + 1)\nnot this format's line\n"
+            write(path, content)
+            record = catalog_names(CATALOG_UUID_A, "A", v"1.0.0", :A)
+            for operation in (() -> read_catalog(path), () -> read_healed_catalog(path),
+                              () -> write_catalog_changes!(path, CatalogRecord[record]),
+                              () -> clear_failures!(path, [record.id]))
+                @test_throws CatalogTooNew operation()
+            end
+            @test read(path, String) == content
+            @test occursin("Update Autoloads", sprint(showerror, CatalogTooNew(path, 3)))
+        end
+    end
+
     @testset "torn catalog" begin
         mktempdir() do dir
             path = joinpath(dir, "catalog")
@@ -162,8 +195,9 @@ catalog_names(uuid, name, version, exported...) =
                     uuid = iseven(k) ? Base.UUID(UInt128(worker * 1000 + k)) : Base.UUID(UInt128(k % 5 + 1))
                     version = VersionNumber(worker, k)
                     names = Set([Symbol("n_", worker, "_", k)])
+                    at = Sighting[(; version, julia = JULIA_MINOR)]
                     write_catalog_changes!(path, CatalogRecord[PkgNames(
-                        Base.PkgId(uuid, "P"), [version], names, Set{Symbol}(), Set{Symbol}())])
+                        Base.PkgId(uuid, "P"), at, names, Set{Symbol}(), Set{Symbol}())])
                 end
                 """)
             julia = Base.julia_cmd()
@@ -174,7 +208,7 @@ catalog_names(uuid, name, version, exported...) =
             for worker in 1:2, k in 1:100
                 uuid = iseven(k) ? Base.UUID(UInt128(worker * 1000 + k)) : Base.UUID(UInt128(k % 5 + 1))
                 name = Symbol("n_", worker, "_", k)
-                @test any(r -> r.id.uuid == uuid && VersionNumber(worker, k) in r.versions &&
+                @test any(r -> r.id.uuid == uuid && any(s -> s.version == VersionNumber(worker, k), r.at) &&
                                r.exported == Set([name]), records)
             end
         end

@@ -10,8 +10,9 @@ repl_input(s) = REPL.softscope(Base.parse_input_line(s))
 statements_of(ex) = (out = Any[]; Scan.map_statements(st -> (push!(out, st); st), ex); out)
 
 function scan_registry()
-    pkg(name, n, exported) = PkgNames(Base.PkgId(Base.UUID(UInt128(n)), name), [v"1.0.0"],
-                                      Set([Symbol(name); exported]), Set{Symbol}(), Set{Symbol}())
+    at = Autoloads.Sighting[(; version = v"1.0.0", julia = Autoloads.JULIA_MINOR)]
+    pkg(name, n, exported) = PkgNames(Base.PkgId(Base.UUID(UInt128(n)), name), at, Set([Symbol(name); exported]),
+                                      Set{Symbol}(), Set{Symbol}())
     records = [pkg("DataFrames", 1, [:DataFrame]), pkg("BenchmarkTools", 2, [Symbol("@btime")]),
                pkg("Profile", 3, Symbol[])]
     autoload = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(r.id => v"1.0.0" for r in records)

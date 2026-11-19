@@ -263,13 +263,19 @@ function observe!(worker::Worker, ids)
         is_own_name_only = isempty(record.public) && isempty(record.reexported) && length(record.exported) == 1
         is_own_name_only || push!(records, record)
     end
-    !isempty(records) && write_catalog_changes!(worker.runtime.catalog_path, records)
+    isempty(records) && return false
+    try
+        write_catalog_changes!(worker.runtime.catalog_path, records)
+    catch err
+        err isa CatalogTooNew || rethrow()
+        false  # `derive_session` warns of it
+    end
 end
 
 """
 Derive and swap the session, then index what it lacks. No session when the
-settings are invalid, or when there is neither a member nor a selected
-project dependency.
+settings are invalid, when the catalog is in a newer format (warned of once),
+or when there is neither a member nor a selected project dependency.
 """
 function refresh!(worker::Worker)
     maintain_environment!(worker)
@@ -293,8 +299,14 @@ function derive_session(worker::Worker)
     autoload = autoload_set(member_env.deps, member_env.graph, project_env.deps, project_env.graph,
                             worker.stdlibs, [record.id for record in worker.builtins], cfg)
     warn_unknown_packages!(worker.reported_unknown_packages, cfg, autoload)
-    catalog = build_catalog(append!(convert(Vector{CatalogRecord}, worker.builtins),
-                                    read_healed_catalog(worker.runtime.catalog_path)))
+    records = try
+        read_healed_catalog(worker.runtime.catalog_path)
+    catch err
+        err isa CatalogTooNew || rethrow()
+        @warn "Autoloads is off" exception = err maxlog = 1
+        return nothing, nothing
+    end
+    catalog = build_catalog(append!(convert(Vector{CatalogRecord}, worker.builtins), records))
     session = Session(catalog, build_registry(catalog, autoload, cfg), cfg, member,
                       Set(id.name for id in member_env.deps))
     # Stdlibs are always indexed, for hints. Without a member, a session implies an active project.

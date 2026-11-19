@@ -1,16 +1,36 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# The on-disk catalog: a header line naming the format, then one record per
-# line. Reads take no lock and skip torn lines, and every line of a file with
-# another header; the session worker's reads and all writes remove them. Writes are
-# rare, serialised by a pidfile lock, and never lose another process's write.
-# Depends only on Base (plus FileWatching, required lazily) so that the
-# standalone indexer script can include it after `records.jl`.
+# The on-disk catalog, shared by every Julia version: a header line naming the
+# format, then one record per line. Reads take no lock and skip torn lines, and
+# every line of a file in an older format; the session worker's reads and all
+# writes remove them. A file in a newer format is neither read nor written.
+# Writes are rare, serialised by a pidfile lock, and never lose another
+# process's write. Depends only on Base (plus FileWatching, required lazily)
+# so that the standalone indexer script can include it after `records.jl`.
 
 const FILEWATCHING_ID = Base.PkgId(Base.UUID("7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"), "FileWatching")
 const LOCK_STALE_AGE_S = 60
-const CATALOG_HEADER = "Autoloads catalog v1"
+const CATALOG_FORMAT = 1
+const CATALOG_HEADER = "Autoloads catalog v$CATALOG_FORMAT"
+# Appended to the catalog path for the lock of this Julia version's indexer.
+const INDEXING_LOCK_SUFFIX = ".indexing-$(minor_text(JULIA_MINOR))"
+
+"""
+    CatalogTooNew(path, format)
+
+The catalog at `path` is in format `format`, newer than this Autoloads
+reads, so it is left untouched.
+"""
+struct CatalogTooNew <: Exception
+    path::String
+    format::Int
+end
+
+Base.showerror(io::IO, e::CatalogTooNew) =
+    print(io, "The Autoloads catalog at ", e.path, " is in format v", e.format, ", newer than the v", CATALOG_FORMAT,
+          " this version of Autoloads reads, so it is left untouched. Update Autoloads for Julia ",
+          minor_text(JULIA_MINOR), " (`pkg> up Autoloads` with the global environment active) to use it.")
 
 """
     read_catalog(path) -> Vector{CatalogRecord}
@@ -18,6 +38,9 @@ const CATALOG_HEADER = "Autoloads catalog v1"
 Read the records in `path`, in file order, without locking. A missing file
 gives no records; malformed (e.g. torn) lines are skipped silently (see
 [`read_healed_catalog`](@ref)).
+
+Raises [`CatalogTooNew`](@ref) for a file in a newer format, as do all the
+other catalog reads and writes.
 """
 read_catalog(path::AbstractString) = first(parse_catalog_file(path))
 
@@ -43,6 +66,7 @@ function read_healed_catalog(path::AbstractString)
             locked_records
         end
     catch err
+        err isa CatalogTooNew && rethrow()
         @warn "Skipped $malformed malformed catalog lines, which could not be removed" path exception = err maxlog = 1
         records
     end
@@ -112,6 +136,7 @@ end
 """
 The records in `path` (none if it is missing) and the number of malformed
 lines: all of them when the file does not start with [`CATALOG_HEADER`](@ref).
+Throws [`CatalogTooNew`](@ref) if it starts with a newer format's header.
 """
 function parse_catalog_file(path::AbstractString)
     records = CatalogRecord[]
@@ -119,7 +144,12 @@ function parse_catalog_file(path::AbstractString)
     isfile(path) || return records, malformed
     has_header = false
     for (i, line) in enumerate(eachline(path))
-        i == 1 && (has_header = line == CATALOG_HEADER) && continue
+        if i == 1
+            header = match(r"^Autoloads catalog v(\d{1,9})$", line)
+            format = if header === nothing 0 else parse(Int, header[1]) end
+            format > CATALOG_FORMAT && throw(CatalogTooNew(path, format))
+            (has_header = format == CATALOG_FORMAT) && continue
+        end
         isempty(line) && continue
         record = if has_header parse_catalog_line(line) end
         if record === nothing

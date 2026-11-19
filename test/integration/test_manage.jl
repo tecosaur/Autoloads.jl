@@ -10,6 +10,9 @@ using Autoloads: PkgNames, PkgFailure, PkgOperationFailed, MemberMissing, read_c
 
 include("setup.jl")
 
+"Sightings of `version` on this Julia minor."
+here(version) = Autoloads.Sighting[(; version, julia = Autoloads.JULIA_MINOR)]
+
 const AUTOLOADS_DIR = dirname(dirname(@__DIR__))
 const AUTOLOADS_UUID = Base.PkgId(Autoloads).uuid
 const ENV_NAME = "v$(VERSION.major).$(VERSION.minor)"
@@ -232,9 +235,9 @@ end
             @test notified[] == 1
             @test occursin(r"○ FixtureA +v0\.1\.0 +not indexed", status_text())
             write_catalog_changes!(catalog, Autoloads.CatalogRecord[
-                PkgNames(FIXTURE_A, [v"0.1.0"], Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
+                PkgNames(FIXTURE_A, here(v"0.1.0"), Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                          Set([:fa_public]), Set{Symbol}()),
-                PkgFailure(FIXTURE_C, v"0.1.0", "FixtureC failed to load\nStacktrace: ...")])
+                PkgFailure(FIXTURE_C, only(here(v"0.1.0")), "FixtureC failed to load\nStacktrace: ...")])
             text = status_text()
             @test occursin(r"✓ FixtureA +v0\.1\.0 +4 exports, 1 public\n", text)
             @test occursin(r"✗ FixtureC +v0\.1\.0 +failed: FixtureC failed to load\n", text)
@@ -248,7 +251,7 @@ end
         end
         @testset "status" begin
             write_catalog_changes!(catalog, Autoloads.CatalogRecord[
-                PkgNames(FIXTURE_C, [v"0.1.0"], Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())])
+                PkgNames(FIXTURE_C, here(v"0.1.0"), Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())])
             text = status_text()
             @test startswith(text, "Global autoloads  $(Base.contractuser(ws.member))\n")
             @test occursin(r"✓ FixtureC +v0\.1\.0 +2 exports\n", text)
@@ -269,13 +272,13 @@ end
                 @test occursin("    @fam, FA_CONST,\n    FixtureA\n", narrow)
                 kinds = Dict(:FixtureA => '.', :fa => '+', :FA_CONST => '=')
                 write_catalog_changes!(catalog, Autoloads.CatalogRecord[
-                    PkgNames(FIXTURE_A, [v"0.1.0"], Set([keys(kinds)..., Symbol("@fam")]), Set([:fa_public]), Set{Symbol}(); kinds)])
+                    PkgNames(FIXTURE_A, here(v"0.1.0"), Set([keys(kinds)..., Symbol("@fam")]), Set([:fa_public]), Set{Symbol}(); kinds)])
                 @test occursin("  Autoloads (3)\n    FixtureA, @fam, FA_CONST\n", status_text("FixtureA"))
                 styled = sprint(io -> Autoloads.status(io, "FixtureA"; kws...); context = :color => true)
                 @test occursin(r"\e\[[0-9;]+mFixtureA\e\[[0-9;]+m, \e\[[0-9;]+m@fam", styled)
                 origins = Dict(:shared_fn => Base.PkgId(Base.UUID(UInt128(1)), "Origin"))
                 write_catalog_changes!(catalog, Autoloads.CatalogRecord[
-                    PkgNames(id, [v"0.1.0"], Set([Symbol(id.name)]), Set{Symbol}(), Set([:shared_fn]); origins)
+                    PkgNames(id, here(v"0.1.0"), Set([Symbol(id.name)]), Set{Symbol}(), Set([:shared_fn]); origins)
                     for id in (FIXTURE_A, FIXTURE_C)])
                 @test occursin("Shared names  (autoloaded once one of their packages is loaded)\n  FixtureA, FixtureC (1)\n" *
                                "    shared_fn\n", status_text())

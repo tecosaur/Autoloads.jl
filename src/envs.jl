@@ -35,13 +35,20 @@ member_dir(global_dir = global_env_dir()) = joinpath(global_dir, "autoloads")
 """
     state_dir(version = VERSION) -> String
 
-The Autoloads state of Julia `version`'s minor (its catalog, and changes
-deferred to it): `julia/autoloads/v#.#` in the user's state directory, as
-BaseDirs.jl's `User.state` finds it: `XDG_STATE_HOME` when it is an
-absolute path, otherwise `~/.local/state`, `~/Library/Application Support`
-on macOS, or `LOCALAPPDATA` on Windows.
+The Autoloads state of Julia `version`'s minor (the changes deferred to it):
+`v#.#` in [`state_root`](@ref).
 """
-function state_dir(version::VersionNumber = VERSION)
+state_dir(version::VersionNumber = VERSION) = joinpath(state_root(), "v$(version.major).$(version.minor)")
+
+"""
+    state_root() -> String
+
+The Autoloads state of every Julia version: `julia/autoloads` in the user's
+state directory, as BaseDirs.jl's `User.state` finds it: `XDG_STATE_HOME`
+when it is an absolute path, otherwise `~/.local/state`,
+`~/Library/Application Support` on macOS, or `LOCALAPPDATA` on Windows.
+"""
+function state_root()
     xdg_state = get(ENV, "XDG_STATE_HOME", "")
     state = if isabspath(xdg_state)
         xdg_state
@@ -52,11 +59,11 @@ function state_dir(version::VersionNumber = VERSION)
     else
         joinpath(homedir(), ".local", "state")
     end
-    joinpath(state, "julia", "autoloads", "v$(version.major).$(version.minor)")
+    joinpath(state, "julia", "autoloads")
 end
 
-"The package catalog file for this Julia version."
-catalog_path() = joinpath(state_dir(), "catalog")
+"The package catalog file, shared by every Julia version."
+catalog_path() = joinpath(state_root(), "catalog")
 
 """
     project_deps(project_file) -> Vector{Base.PkgId}

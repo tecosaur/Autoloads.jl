@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 using Test
-using Autoloads: member_dir, catalog_path, project_deps, manifest_graph, environment, dependency_closure,
+using Autoloads: member_dir, catalog_path, state_dir, project_deps, manifest_graph, environment, dependency_closure,
     stdlib_ids, builtin_records, run_julia, notify_env_change, ENV_CHANGED, load_config,
     Config
 
@@ -41,11 +41,12 @@ function workspace_fixture(root)
         """)
 end
 
-@testset "member_dir and catalog_path" begin
+@testset "member_dir, catalog_path and state_dir" begin
     @test member_dir("/g") == joinpath("/g", "autoloads")
-    tail = joinpath("julia", "autoloads", "v$(VERSION.major).$(VERSION.minor)", "catalog")
+    tail = joinpath("julia", "autoloads", "catalog")
     withenv("XDG_STATE_HOME" => "/state") do
         @test catalog_path() == joinpath("/state", tail)
+        @test state_dir(v"1.10.2") == joinpath("/state", "julia", "autoloads", "v1.10")
     end
     withenv("XDG_STATE_HOME" => "relative/state") do
         @test catalog_path() != joinpath("relative/state", tail) && endswith(catalog_path(), tail)

@@ -103,6 +103,7 @@ The `global_dir` and `catalog` keywords are internal, for testing.
 # Raises
 - `ArgumentError` when `pkgs` is empty.
 - [`PkgOperationFailed`](@ref) when Pkg fails.
+- [`CatalogTooNew`](@ref) when the catalog is in a newer format, after Pkg has added the packages.
 
 # Example
 ```julia
@@ -217,6 +218,7 @@ internal, for testing.
 
 # Raises
 - [`ConfigError`](@ref) when the Autoloads preferences are invalid.
+- [`CatalogTooNew`](@ref) when the catalog is in a newer format.
 - `ArgumentError` for a package that does not autoload here.
 
 # Example

@@ -7,7 +7,8 @@
 ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
 try
     let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload")
-        records = CatalogRecord[PkgNames(id, [v"1.0.0"], Set([:Workload, :wl, Symbol("@wl")]), Set([:wp]), Set{Symbol}())]
+        at = Sighting[(; version = v"1.0.0", julia = JULIA_MINOR)]
+        records = CatalogRecord[PkgNames(id, at, Set([:Workload, :wl, Symbol("@wl")]), Set([:wp]), Set{Symbol}())]
         catalog = build_catalog(records)
         cfg = parse_config(Dict{String, Any}())
         reg = build_registry(catalog, Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0"), cfg)
@@ -42,7 +43,8 @@ try
             member = joinpath(dir, "autoloads")
             mkpath(member)
             write(joinpath(member, "Project.toml"), "[deps]\nWorkload = \"$(id.uuid)\"\n")
-            write_catalog_changes!(joinpath(dir, "catalog"), [records; PkgFailure(id, v"0.9.0", "failed")])
+            failure = PkgFailure(id, (; version = v"0.9.0", julia = JULIA_MINOR), "failed")
+            write_catalog_changes!(joinpath(dir, "catalog"), [records; failure])
             parse_config(Dict{String, Any}("project" => ["Workload"], "packages" => Dict{String, Any}(
                 "Workload" => Dict{String, Any}("skip" => ["wl"], "only" => ["wp"], "bindings" => "used"))))
             worker = Worker(Runtime(Channel{Event}(Inf), member, joinpath(dir, "catalog")), Indexer())

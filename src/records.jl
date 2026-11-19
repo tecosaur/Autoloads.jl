@@ -8,18 +8,24 @@
 # What a name is bound to: a module, function, type or other value. A macro's name says as much.
 const NAME_KINDS = ".+:="
 
-"""
-    PkgNames(id, versions, exported, public, reexported; kinds = Dict(), origins = Dict())
+"This session's Julia minor version, as records key it."
+const JULIA_MINOR = VersionNumber(VERSION.major, VERSION.minor)
 
-One namespace offered by package `id`, and the exact sorted `versions`
-offering it (empty for built-in modules). `exported` always includes the
-module's own name. Where known, `kinds` maps names other than macros to one
-of [`NAME_KINDS`](@ref), and `origins` re-exported names to the package
-owning them. Records for one `id` have disjoint `versions`.
+"A package `version` (`nothing` if it has none, as a built-in) seen on Julia minor version `julia`."
+const Sighting = @NamedTuple{version::Union{VersionNumber, Nothing}, julia::VersionNumber}
+
+"""
+    PkgNames(id, at, exported, public, reexported; kinds = Dict(), origins = Dict())
+
+One namespace offered by package `id`, at each [`Sighting`](@ref) in `at`
+(sorted, nonempty). `exported` always includes the module's own name. Where
+known, `kinds` maps names other than macros to one of [`NAME_KINDS`](@ref),
+and `origins` re-exported names to the package owning them. Records for one
+`id` have disjoint `at`.
 """
 struct PkgNames
     id::Base.PkgId
-    versions::Vector{VersionNumber}
+    at::Vector{Sighting}
     exported::Set{Symbol}
     public::Set{Symbol}
     reexported::Set{Symbol}
@@ -27,17 +33,17 @@ struct PkgNames
     origins::Dict{Symbol, Base.PkgId}
 end
 
-PkgNames(id, versions, exported, public, reexported; kinds = Dict{Symbol, Char}(), origins = Dict{Symbol, Base.PkgId}()) =
-    PkgNames(id, versions, exported, public, reexported, kinds, origins)
+PkgNames(id, at, exported, public, reexported; kinds = Dict{Symbol, Char}(), origins = Dict{Symbol, Base.PkgId}()) =
+    PkgNames(id, at, exported, public, reexported, kinds, origins)
 
 """
-    PkgFailure(id, version, message)
+    PkgFailure(id, at, message)
 
-Package `id` could not be loaded at `version` (`nothing` if unknown).
+Package `id` could not be loaded at [`Sighting`](@ref) `at`.
 """
 struct PkgFailure
     id::Base.PkgId
-    version::Union{VersionNumber, Nothing}
+    at::Sighting
     message::String
 end
 
@@ -47,24 +53,25 @@ const CatalogRecord = Union{PkgNames, PkgFailure}
 const INTERRUPTED_EXIT_CODE = 130
 
 Base.:(==)(a::PkgNames, b::PkgNames) =
-    a.id == b.id && a.versions == b.versions && same_namespace(a, b)
+    a.id == b.id && a.at == b.at && same_namespace(a, b)
 
 Base.:(==)(a::PkgFailure, b::PkgFailure) =
-    a.id == b.id && a.version == b.version && a.message == b.message
+    a.id == b.id && a.at == b.at && a.message == b.message
 
 Base.hash(r::PkgNames, h::UInt) =
-    hash((r.id, r.versions, r.exported, r.public, r.reexported, r.kinds, r.origins), hash(:PkgNames, h))
+    hash((r.id, r.at, r.exported, r.public, r.reexported, r.kinds, r.origins), hash(:PkgNames, h))
 
 Base.hash(r::PkgFailure, h::UInt) =
-    hash((r.id, r.version, r.message), hash(:PkgFailure, h))
+    hash((r.id, r.at, r.message), hash(:PkgFailure, h))
 
 """
     extract_names(mod, id = Base.PkgId(mod)) -> PkgNames
 
-Collect the namespace `mod` offers. Names defined in `mod` or its submodules
-are `exported` or `public`; names exported from other packages are
-`reexported`; names owned by `Base`/`Core` are skipped unless `mod` is itself
-part of `Base`. Undefined bindings and names containing whitespace are skipped.
+Collect the namespace `mod` offers, seen at its `pkgversion` on this Julia.
+Names defined in `mod` or its submodules are `exported` or `public`; names
+exported from other packages are `reexported`; names owned by `Base`/`Core`
+are skipped unless `mod` is itself part of `Base`. Undefined bindings and
+names containing whitespace are skipped.
 
 # Example
 ```julia
@@ -95,25 +102,27 @@ function extract_names(mod::Module, id::Base.PkgId = Base.PkgId(mod))
         value = getglobal(mod, name)
         kinds[name] = if value isa Module '.' elseif value isa Function '+' elseif value isa Type ':' else '=' end
     end
-    version = pkgversion(mod)
-    PkgNames(id, if version === nothing VersionNumber[] else [version] end, exported, public, reexported, kinds, origins)
+    PkgNames(id, Sighting[(; version = pkgversion(mod), julia = JULIA_MINOR)], exported, public, reexported, kinds, origins)
 end
 
 """
     merge_observation(existing, new) -> Vector{CatalogRecord}
 
 Return the records for one package after observing `new`, a [`PkgNames`](@ref)
-or a [`PkgFailure`](@ref). A multi-version `PkgNames` is observed one version
-at a time, in order. The result is `existing` itself
-when a record already says the same about that version. Otherwise the version
+or a [`PkgFailure`](@ref). A `PkgNames` seen at several sightings is observed
+one sighting at a time, in order. The result is `existing` itself when a
+record already says the same about that sighting. Otherwise the sighting
 leaves whichever record held it (records left empty, and failures at that
-version, are dropped) and joins a record with an identical namespace, or
+sighting, are dropped) and joins a record with an identical namespace, or
 `new` is appended.
 """
 function merge_observation(existing::Vector{CatalogRecord}, new::PkgNames)
-    length(new.versions) > 1 || return merge_single(existing, new)
-    foldl(new.versions; init = existing) do records, version
-        merge_single(records, with_versions(new, [version]))
+    # As a catalog file's records are: folding them in one sighting at a time only appends.
+    is_apart(record) = !any(sighting -> holds(record, sighting), new.at) &&
+        !(record isa PkgNames && same_namespace(record, new))
+    all(is_apart, existing) && return push!(copy(existing), new)
+    foldl(new.at; init = existing) do records, sighting
+        merge_single(records, with_sightings(new, [sighting]))
     end
 end
 
@@ -123,22 +132,23 @@ merge_observation(existing::Vector{CatalogRecord}, new::PkgFailure) = merge_sing
     catalog_line(record) -> String
 
 Serialise `record` to one tab-separated line, the inverse of
-[`parse_catalog_line`](@ref). Each name but a macro's follows its kind (`?` if
-unknown); re-exported names follow a `/uuid/Name` token for their origin.
+[`parse_catalog_line`](@ref). Sightings are written as `;`-separated groups
+of `,`-separated versions (`-` for none) seen on the same Julia minors, each
+followed by `@` and those minors as `+`-separated ranges, as in
+`1.0.0,1.1.0@1.12-14;1.2.0@1.14`. Each name but a macro's follows its kind
+(`?` if unknown); re-exported names follow a `/uuid/Name` token for their origin.
 
 # Raises
 `ArgumentError` if the id has no UUID or any name contains whitespace, since
 the line could not be parsed back.
 """
 function catalog_line(record::PkgNames)
-    versions = if isempty(record.versions) "-" else join(record.versions, ',') end
-    join((id_fields(record.id)..., versions, "ok",
+    join((id_fields(record.id)..., sightings_field(record.at), "ok",
           name_list(record.exported, record.kinds), name_list(record.public, record.kinds), reexport_list(record)), '\t')
 end
 
 function catalog_line(record::PkgFailure)
-    join((id_fields(record.id)..., string(something(record.version, "-")), "failed",
-          escape_message(record.message)), '\t')
+    join((id_fields(record.id)..., sightings_field([record.at]), "failed", escape_message(record.message)), '\t')
 end
 
 """
@@ -153,45 +163,49 @@ function parse_catalog_line(line::AbstractString)
     uuid = tryparse(Base.UUID, fields[1])
     (uuid === nothing || isempty(fields[2])) && return nothing
     id = Base.PkgId(uuid, String(fields[2]))
+    at = @something(parse_sightings(fields[3]), return nothing)
     if fields[4] == "ok" && length(fields) == 7
-        versions = parse_versions(fields[3])
-        versions === nothing && return nothing
-        is_macro(token) = startswith(token, '@')
-        is_name(token) = is_macro(token) || (length(token) > 1 && first(token) in NAME_KINDS * '?')
-        name(token) = Symbol(if is_macro(token) token else token[2:end] end)
-        tokens = [split(field, ' '; keepempty = false) for field in fields[5:7]]
-        origins, origin = Dict{Symbol, Base.PkgId}(), nothing
-        for token in tokens[3]
-            if startswith(token, '/')
-                parts = split(token, '/')
-                length(parts) == 3 || return nothing
-                origin_uuid = if !isempty(parts[2]) @something(tryparse(Base.UUID, parts[2]), return nothing) end
-                origin = Base.PkgId(origin_uuid, String(parts[3]))
-            elseif origin !== nothing && is_name(token)
-                origins[name(token)] = origin
+        sets = (Set{Symbol}(), Set{Symbol}(), Set{Symbol}())
+        kinds, origins = Dict{Symbol, Char}(), Dict{Symbol, Base.PkgId}()
+        for (index, field) in enumerate(fields[5:7])
+            origin = nothing
+            for token in eachsplit(field, ' '; keepempty = false)
+                if index == 3 && startswith(token, '/')
+                    parts = split(token, '/')
+                    length(parts) == 3 || return nothing
+                    origin_uuid = if !isempty(parts[2]) @something(tryparse(Base.UUID, parts[2]), return nothing) end
+                    origin = Base.PkgId(origin_uuid, String(parts[3]))
+                    continue
+                end
+                kind = first(token)
+                # A kind is one ASCII byte, so the name starts at index 2.
+                name = if kind == '@'
+                    Symbol(token)
+                elseif ncodeunits(token) > 1 && (kind in NAME_KINDS || kind == '?')
+                    Symbol(SubString(token, 2))
+                else
+                    return nothing
+                end
+                push!(sets[index], name)
+                kind in NAME_KINDS && (kinds[name] = kind)
+                origin === nothing || (origins[name] = origin)
             end
         end
-        filter!(token -> !startswith(token, '/'), tokens[3])
-        all(is_name, Iterators.flatten(tokens)) || return nothing
-        kinds = Dict{Symbol, Char}(name(token) => first(token) for token in Iterators.flatten(tokens)
-                                   if first(token) in NAME_KINDS)
-        PkgNames(id, versions, (Set{Symbol}(name(token) for token in field) for field in tokens)..., kinds, origins)
-    elseif fields[4] == "failed"
-        version = tryparse(VersionNumber, fields[3])
-        version === nothing && fields[3] != "-" && return nothing
+        PkgNames(id, at, sets..., kinds, origins)
+    elseif fields[4] == "failed" && length(at) == 1
         message = unescape_message(join(fields[5:end], '\t'))
-        if message !== nothing PkgFailure(id, version, message) end
+        if message !== nothing PkgFailure(id, only(at), message) end
     end
 end
 
 # ── Helpers ──
 
 function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
-    version = observed_version(new)
-    any(r -> holds_version(r, version) && same_claim(r, new), existing) && return existing
+    sighting = observed_sighting(new)
+    any(r -> holds(r, sighting) && same_claim(r, new), existing) && return existing
     merged = CatalogRecord[]
     for record in existing
-        stripped = without_version(record, version)
+        stripped = without_sighting(record, sighting)
         stripped === nothing || push!(merged, stripped)
     end
     twin = if new isa PkgNames findfirst(r -> r isa PkgNames && same_namespace(r, new), merged) end
@@ -199,7 +213,7 @@ function merge_single(existing::Vector{CatalogRecord}, new::CatalogRecord)
         push!(merged, new)
     else
         record = merged[twin]
-        merged[twin] = with_versions(record, sort!(vcat(record.versions, new.versions)))
+        merged[twin] = with_sightings(record, sort!(vcat(record.at, new.at); by = sighting_order))
     end
     merged
 end
@@ -208,27 +222,90 @@ same_namespace(a::PkgNames, b::PkgNames) =
     a.exported == b.exported && a.public == b.public && a.reexported == b.reexported && a.kinds == b.kinds &&
     a.origins == b.origins
 
-with_versions(record::PkgNames, versions::Vector{VersionNumber}) =
-    PkgNames(record.id, versions, record.exported, record.public, record.reexported, record.kinds, record.origins)
+with_sightings(record::PkgNames, at::Vector{Sighting}) =
+    PkgNames(record.id, at, record.exported, record.public, record.reexported, record.kinds, record.origins)
 
 same_claim(a::PkgNames, b::PkgNames) = same_namespace(a, b)
 same_claim(a::PkgFailure, b::PkgFailure) = a.message == b.message
 same_claim(::CatalogRecord, ::CatalogRecord) = false
 
-observed_version(record::PkgNames) = if !isempty(record.versions) only(record.versions) end
-observed_version(record::PkgFailure) = record.version
+observed_sighting(record::PkgNames) = only(record.at)
+observed_sighting(record::PkgFailure) = record.at
 
-# A built-in's namespace is held by the `nothing` version.
-holds_version(record::PkgNames, version) =
-    if version === nothing isempty(record.versions) else version in record.versions end
-holds_version(record::PkgFailure, version) = record.version == version
+holds(record::PkgNames, sighting::Sighting) = sighting in record.at
+holds(record::PkgFailure, sighting::Sighting) = record.at == sighting
 
-without_version(record::PkgFailure, version) = if record.version != version record end
+without_sighting(record::PkgFailure, sighting::Sighting) = if record.at != sighting record end
 
-function without_version(record::PkgNames, version)
-    holds_version(record, version) || return record
-    remaining = filter(!=(version), record.versions)
-    if !isempty(remaining) with_versions(record, remaining) end
+function without_sighting(record::PkgNames, sighting::Sighting)
+    holds(record, sighting) || return record
+    remaining = filter(!=(sighting), record.at)
+    if !isempty(remaining) with_sightings(record, remaining) end
+end
+
+# No version sorts before any.
+version_order(version::Union{VersionNumber, Nothing}) = (version !== nothing, something(version, v"0"))
+sighting_order((; version, julia)::Sighting) = (julia, version_order(version))
+
+minor_text(julia::VersionNumber) = "$(julia.major).$(julia.minor)"
+
+# `at` is sorted, so each version's minors are too.
+function sightings_field(at::Vector{Sighting})
+    minors_of = Dict{Union{VersionNumber, Nothing}, Vector{VersionNumber}}()
+    for (; version, julia) in at
+        push!(get!(minors_of, version, VersionNumber[]), julia)
+    end
+    versions_on = Dict{Vector{VersionNumber}, Vector{Union{VersionNumber, Nothing}}}()
+    for (version, minors) in minors_of
+        push!(get!(versions_on, minors, Union{VersionNumber, Nothing}[]), version)
+    end
+    groups = map(sort!(collect(versions_on); by = first)) do (minors, versions)
+        join((something(v, "-") for v in sort!(versions; by = version_order)), ',') * '@' * julia_ranges(minors)
+    end
+    join(groups, ';')
+end
+
+"Sorted Julia minors as `+`-separated runs of consecutive minors, as in `1.10+1.12-14`."
+function julia_ranges(minors::Vector{VersionNumber})
+    precedes(a, b) = a !== nothing && b !== nothing && a.major == b.major && a.minor + 1 == b.minor
+    io = IOBuffer()
+    for (i, minor) in enumerate(minors)
+        previous, next = get(minors, i - 1, nothing), get(minors, i + 1, nothing)
+        if !precedes(previous, minor)
+            print(io, if i > 1 "+" else "" end, minor_text(minor))
+        elseif !precedes(minor, next)
+            print(io, '-', minor.minor)
+        end
+    end
+    String(take!(io))
+end
+
+# `nothing` unless every group, version and Julia range is well formed.
+function parse_sightings(field::AbstractString)
+    at = Sighting[]
+    for group in eachsplit(field, ';')
+        parts = split(group, '@')
+        length(parts) == 2 || return nothing
+        versions_text, julias_text = parts
+        minors = @something(parse_julia_ranges(julias_text), return nothing)
+        for text in eachsplit(versions_text, ',')
+            version = if text == "-" nothing else @something(tryparse(VersionNumber, text), return nothing) end
+            append!(at, Sighting[(; version, julia) for julia in minors])
+        end
+    end
+    if !isempty(at) sort!(unique!(at); by = sighting_order) end
+end
+
+function parse_julia_ranges(text::AbstractString)
+    minors = VersionNumber[]
+    for range in eachsplit(text, '+')
+        bounds = @something(match(r"^(\d{1,4})\.(\d{1,4})(?:-(\d{1,4}))?$", range), return nothing)
+        major, from = parse(Int, bounds[1]), parse(Int, bounds[2])
+        to = if bounds[3] === nothing from else parse(Int, bounds[3]) end
+        from <= to || return nothing
+        append!(minors, VersionNumber(major, minor) for minor in from:to)
+    end
+    minors
 end
 
 function is_within(mod::Module, ancestor::Module)
@@ -265,12 +342,6 @@ function reexport_list(record::PkgNames)
         push!(parts, name_list(by_origin[origin], record.kinds))
     end
     join(parts, ' ')
-end
-
-function parse_versions(field::AbstractString)
-    field == "-" && return VersionNumber[]
-    versions = tryparse.(VersionNumber, split(field, ','))
-    if !any(isnothing, versions) versions end
 end
 
 escape_message(message::AbstractString) =

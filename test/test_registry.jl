@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 using Test
-using Autoloads: PkgNames, PkgFailure, CatalogRecord, Config, PackageConfig, parse_config,
+using Autoloads: PkgNames, PkgFailure, CatalogRecord, Sighting, JULIA_MINOR, Config, PackageConfig, parse_config,
     ManifestGraph, AllBindings, UsedBindings, Catalog, Registry, LoadRequest, build_catalog,
     records_of, names_at, failed_at, providers, autoload_set, build_registry, owner,
     is_candidate, pending_loads, to_index, builtin_records
@@ -10,9 +10,13 @@ using Autoloads: PkgNames, PkgFailure, CatalogRecord, Config, PackageConfig, par
 pkg_id(name, n) = Base.PkgId(Base.UUID(UInt128(n)), name)
 const ID_X, ID_Y, ID_Z = pkg_id("X", 1), pkg_id("Y", 2), pkg_id("Z", 3)
 
-names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Symbol[], origin = nothing) =
-    PkgNames(id, VersionNumber.(versions), Set([Symbol(id.name); exported]), Set(public), Set(reexported);
+names_for(id, versions, exported = Symbol[]; public = Symbol[], reexported = Symbol[], origin = nothing,
+          julia = JULIA_MINOR) =
+    PkgNames(id, Sighting[(; version = VersionNumber(v), julia) for v in versions], Set([Symbol(id.name); exported]),
+             Set(public), Set(reexported);
              origins = Dict{Symbol, Base.PkgId}(name => origin for name in reexported if origin !== nothing))
+
+failure_for(id, version; julia = JULIA_MINOR) = PkgFailure(id, (; version, julia), "boom")
 
 # Neither stdlibs nor the project autoload unless a test asks.
 cfg_of(; kwargs...) = parse_config(Dict{String, Any}("stdlib" => false, "project" => false,
@@ -26,8 +30,8 @@ registry_of(records, autoload, cfg = cfg_of()) = build_registry(build_catalog(re
     a1 = names_for(ID_X, ["1.0.0"], [:f])
     a2 = names_for(ID_X, ["2.0.0"], [:f, :g])
     a1b = names_for(ID_X, ["1.1.0"], [:f])
-    cat = build_catalog([a1, a2, a1b, PkgFailure(ID_Y, v"1.0.0", "boom")])
-    @test names_at(cat, ID_X, v"1.1.0").versions == [v"1.0.0", v"1.1.0"]
+    cat = build_catalog([a1, a2, a1b, failure_for(ID_Y, v"1.0.0")])
+    @test names_at(cat, ID_X, v"1.1.0").at == Sighting[(; version, julia = JULIA_MINOR) for version in (v"1.0.0", v"1.1.0")]
     @test names_at(cat, ID_X, v"2.0.0") == a2
     @test names_at(cat, ID_X, v"3.0.0") === nothing
     @test names_at(cat, ID_X, nothing) == a2
@@ -45,6 +49,29 @@ registry_of(records, autoload, cfg = cfg_of()) = build_registry(build_catalog(re
     @test providers(pc, :f) == [(ID_X, true), (ID_Y, false)]
     @test isempty(providers(pc, :nope))
     @test isempty(providers(build_catalog([names_for(ID_X, ["1.0.0"]; public = [:p])]), :p))
+end
+
+@testset "lookups from another Julia minor" begin
+    older = names_for(ID_X, ["1.0.0"], [:old]; julia = v"1.11")
+    near = names_for(ID_X, ["1.0.0"], [:near]; julia = v"1.12")
+    newer = names_for(ID_X, ["1.0.0"], [:new]; julia = v"1.14")
+    from(julia, records...) = build_catalog(collect(CatalogRecord, records); julia)
+    @test names_at(from(v"1.12", older, near, newer), ID_X, v"1.0.0") == near
+    @test names_at(from(v"1.13", older, near, newer), ID_X, v"1.0.0") == near
+    @test names_at(from(v"1.13", older, newer), ID_X, v"1.0.0") == older
+    @test names_at(from(v"1.13", newer), ID_X, v"1.0.0") == newer
+    @test names_at(from(v"1.13", near), ID_X, v"2.0.0") === nothing
+    @test providers(from(v"1.13", older, newer), :old) == [(ID_X, true)]
+    # This minor's records come first, whatever the version.
+    here = names_for(ID_X, ["1.0.0"], [:here]; julia = v"1.13")
+    later = names_for(ID_X, ["2.0.0"], [:later]; julia = v"1.12")
+    @test names_at(from(v"1.13", here, later), ID_X, nothing) == here
+    @testset "a stand-in is still indexed, and failures stay with their minor" begin
+        cat = from(v"1.13", near, failure_for(ID_Y, v"1.0.0"; julia = v"1.12"))
+        @test failed_at(cat, ID_Y, v"1.0.0") === nothing
+        @test to_index(cat, Dict(ID_X => v"1.0.0", ID_Y => v"1.0.0")) == [ID_X, ID_Y]
+        @test to_index(cat, Dict{Base.PkgId, Union{VersionNumber, Nothing}}(ID_X => nothing)) == [ID_X]
+    end
 end
 
 @testset "autoload_set" begin
@@ -147,7 +174,7 @@ end
 end
 
 @testset "to_index" begin
-    cat = build_catalog([names_for(ID_X, ["1.0.0"]), PkgFailure(ID_Y, v"1.0.0", "boom"),
+    cat = build_catalog([names_for(ID_X, ["1.0.0"]), failure_for(ID_Y, v"1.0.0"),
                          names_for(ID_Z, ["1.0.0"])])
     wanted = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(
         ID_X => v"1.0.0", ID_Y => v"1.0.0", ID_Z => v"2.0.0")

@@ -10,10 +10,11 @@ const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
 pkg(name, n) = Base.PkgId(Base.UUID(UInt128(n)), name)
 const DATAFRAMES, BENCHMARKTOOLS, OTHER = pkg("DataFrames", 1), pkg("BenchmarkTools", 2), pkg("Other", 3)
 
+const AT = Autoloads.Sighting[(; version = v"1.0.0", julia = Autoloads.JULIA_MINOR)]
 const CATALOG = Autoloads.build_catalog([
-    Autoloads.PkgNames(DATAFRAMES, [v"1.0.0"], Set([:DataFrames, :DataFrame, :groupby, :shared]), Set([:metadata]), Set{Symbol}()),
-    Autoloads.PkgNames(BENCHMARKTOOLS, [v"1.0.0"], Set([:BenchmarkTools, Symbol("@btime")]), Set{Symbol}(), Set{Symbol}()),
-    Autoloads.PkgNames(OTHER, [v"1.0.0"], Set([:Other, :shared]), Set{Symbol}(), Set{Symbol}())])
+    Autoloads.PkgNames(DATAFRAMES, AT, Set([:DataFrames, :DataFrame, :groupby, :shared]), Set([:metadata]), Set{Symbol}()),
+    Autoloads.PkgNames(BENCHMARKTOOLS, AT, Set([:BenchmarkTools, Symbol("@btime")]), Set{Symbol}(), Set{Symbol}()),
+    Autoloads.PkgNames(OTHER, AT, Set([:Other, :shared]), Set{Symbol}(), Set{Symbol}())])
 const CONFIG = Autoloads.parse_config(Dict{String, Any}())
 const REGISTRY = Autoloads.build_registry(CATALOG,
     Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0" for id in (DATAFRAMES, BENCHMARKTOOLS, OTHER)), CONFIG)

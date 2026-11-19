@@ -22,7 +22,8 @@ const SESSION_SETUP = """
     using Autoloads: PkgNames, CatalogRecord, build_catalog, build_registry, parse_config
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
     origin = Base.PkgId(Base.UUID(UInt128(2)), "Origin")
-    names(id, exported...; shared = Symbol[]) = PkgNames(id, VersionNumber[], Set(exported), Set{Symbol}(), Set(shared);
+    at = Autoloads.Sighting[(; version = nothing, julia = Autoloads.JULIA_MINOR)]
+    names(id, exported...; shared = Symbol[]) = PkgNames(id, at, Set(exported), Set{Symbol}(), Set(shared);
                                                          origins = Dict(name => origin for name in shared))
     records = CatalogRecord[names(Base.PkgId(Base.UUID(UInt128(1)), "Stranger"), :Stranger, :stranger_fn; shared = [:LineEditREPL]),
                             names(Base.PkgId(REPL), :REPL; shared = [:LineEditREPL]),

@@ -9,6 +9,9 @@ using Autoloads: PkgNames, CatalogRecord, stdlib_ids, write_catalog_changes!, ru
 
 include("setup.jl")
 
+"Sightings of `version` on this Julia minor."
+here(version) = Autoloads.Sighting[(; version, julia = Autoloads.JULIA_MINOR)]
+
 const CASES = joinpath(@__DIR__, "session_cases.jl")
 const TEST_PROJECT = dirname(@__DIR__)
 const AUTOLOADS_UUID = Base.PkgId(Autoloads).uuid
@@ -44,19 +47,19 @@ end
 "A record offering only the stdlib's own name, at its version, without loading it."
 function stdlib_stub(id::Base.PkgId)
     version = get(Base.parsed_toml(joinpath(Sys.STDLIB, id.name, "Project.toml")), "version", nothing)
-    PkgNames(id, version === nothing ? VersionNumber[] : [VersionNumber(version)], Set([Symbol(id.name)]),
+    PkgNames(id, here(version === nothing ? nothing : VersionNumber(version)), Set([Symbol(id.name)]),
              Set{Symbol}(), Set{Symbol}())
 end
 
 # Seeded records are never re-indexed, so sessions start without indexing them.
 const STDLIB_RECORDS = CatalogRecord[real_stdlib_records(SHARED);
                                      [stdlib_stub(id) for id in stdlib_ids() if id.name ∉ REAL_STDLIBS]]
-const FIXTURE_A_NAMES = PkgNames(FIXTURE_A, [v"0.1.0"], Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
+const FIXTURE_A_NAMES = PkgNames(FIXTURE_A, here(v"0.1.0"), Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                                  Set([:fa_public]), Set{Symbol}())
 # FixtureB re-exports `fa`; FixtureC owns a `fa` of its own.
-const FIXTURE_B_NAMES = PkgNames(FIXTURE_B, [v"0.1.0"], Set([:FixtureB, :fb]), Set{Symbol}(), Set([:fa]))
-const FIXTURE_C_NAMES = PkgNames(FIXTURE_C, [v"0.1.0"], Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())
-const STRANGER_NAMES = PkgNames(Base.PkgId(Base.UUID("5555aaaa-1111-4111-8111-000000000005"), "Stranger"), [v"1.0.0"],
+const FIXTURE_B_NAMES = PkgNames(FIXTURE_B, here(v"0.1.0"), Set([:FixtureB, :fb]), Set{Symbol}(), Set([:fa]))
+const FIXTURE_C_NAMES = PkgNames(FIXTURE_C, here(v"0.1.0"), Set([:FixtureC, :fa]), Set{Symbol}(), Set{Symbol}())
+const STRANGER_NAMES = PkgNames(Base.PkgId(Base.UUID("5555aaaa-1111-4111-8111-000000000005"), "Stranger"), here(v"1.0.0"),
                                 Set([:Stranger, :stranger_fn]), Set{Symbol}(), Set{Symbol}())
 const FIXTURE_UUIDS = Dict(id.name => id.uuid for id in (FIXTURE_A, FIXTURE_B, FIXTURE_C))
 
@@ -164,6 +167,20 @@ end
     @testset "an unchanged observation writes nothing" begin
         check_cases(start_cases("observe-again", SHARED, no_member, project_catalog; project = projects.selecting))
     end
+end
+
+@testset "a catalog in a newer format turns autoloading off, with one warning" begin
+    Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
+    catalog = joinpath(mktempdir(), "catalog")
+    content = "Autoloads catalog v$(Autoloads.CATALOG_FORMAT + 1)\n"
+    write(catalog, content)
+    worker = Ext.Worker(Ext.Runtime(Channel{Ext.Event}(Inf), SHARED.member, catalog), Ext.Indexer())
+    logger = Test.TestLogger(; respect_maxlog = true)
+    sessions = Base.CoreLogging.with_logger(() -> [Ext.derive_session(worker) for _ in 1:2], logger)
+    @test sessions == [(nothing, nothing), (nothing, nothing)]
+    @test count(log -> log.level == Base.CoreLogging.Warn && log.message == "Autoloads is off", logger.logs) == 1
+    @test !Ext.observe!(worker, [Base.PkgId(Autoloads)])
+    @test read(catalog, String) == content
 end
 
 end

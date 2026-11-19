@@ -41,7 +41,7 @@ already has a run in progress or `wanted` is empty.
 `policy` is the [`PrecompilePolicy`](@ref): `Background` first precompiles
 the non-stdlib packages with this session's flags; `Lazy` writes no caches.
 The subprocess's output is appended to `path * ".log"`. If another session's
-indexer holds the catalog's `.indexing` lock, the subprocess exits at once.
+indexer of this Julia version holds its lock, the subprocess exits at once.
 
 Once the subprocess exits, a failure is recorded for the package it was
 loading if it timed out, crashed or exited abnormally (but not when
@@ -83,12 +83,13 @@ function exit_failure(in_progress, exitcode::Integer, termsignal::Integer, timed
     in_progress === nothing && return nothing
     exitcode == 0 && termsignal == 0 && return nothing
     id, version = in_progress
+    at = (; version, julia = JULIA_MINOR)
     timed_out && termsignal == Base.SIGKILL &&
-        return PkgFailure(id, version, "indexer timed out after $timeout_s s while indexing")
+        return PkgFailure(id, at, "indexer timed out after $timeout_s s while indexing")
     termsignal in INTERRUPT_SIGNALS && return nothing
     termsignal == 0 && exitcode == INTERRUPTED_EXIT_CODE && return nothing
-    termsignal != 0 && return PkgFailure(id, version, "indexer killed by signal $termsignal while indexing")
-    PkgFailure(id, version, "indexer exited with code $exitcode while indexing")
+    termsignal != 0 && return PkgFailure(id, at, "indexer killed by signal $termsignal while indexing")
+    PkgFailure(id, at, "indexer exited with code $exitcode while indexing")
 end
 
 function catalog_stamp(path)
@@ -160,7 +161,7 @@ function supervise(process::Base.Process, pid::Integer, output::Pipe, path, want
             @debug "Recording indexer failure" failure.id failure.message
             write_catalog_changes!(path, CatalogRecord[failure])
         end
-        success(process) || release_indexing_lock(path * ".indexing", pid)
+        success(process) || release_indexing_lock(path * INDEXING_LOCK_SUFFIX, pid)
     finally
         disarm!()
         # Never leave the child running unsupervised after a supervisor error.

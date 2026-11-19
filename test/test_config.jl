@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 using Test
-using Autoloads: Config, PackageConfig, ConfigError, PrecompilePolicy, Bindings,
+using Autoloads: Sighting, JULIA_MINOR, Config, PackageConfig, ConfigError, PrecompilePolicy, Bindings,
     Background, Lazy, AllBindings, UsedBindings, parse_config, package_config,
     bindings_for, autoload_names, PkgNames
 
@@ -67,7 +67,8 @@ end
 
 @testset "autoload_names" begin
     id = Base.PkgId(Base.UUID("11111111-2222-3333-4444-555555555555"), "Pkg.Sub")
-    r = PkgNames(id, VersionNumber[], Set([:Sub, :a, :b, Symbol("@btime")]), Set([:p]), Set([:r]))
+    at = Sighting[(; version = nothing, julia = JULIA_MINOR)]
+    r = PkgNames(id, at, Set([:Sub, :a, :b, Symbol("@btime")]), Set([:p]), Set([:r]))
     names(c) = autoload_names(r, c)
     @test names(PackageConfig(Set{Symbol}(), nothing, nothing)) == Set([:Sub, :a, :b, :r, Symbol("@btime")])
     @test names(PackageConfig(Set([:a, Symbol("@btime")]), nothing, nothing)) == Set([:Sub, :b, :r])

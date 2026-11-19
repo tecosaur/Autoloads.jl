@@ -9,8 +9,8 @@
 # with `-` for an unknown version. Progress goes to stdout for the supervisor:
 # `indexing <uuid>` before loading each package, `indexed <uuid>` once its
 # record is written, and `precompiling start` / `precompiling done` around the
-# precompile phase. If another indexer holds the catalog's `.indexing` lock,
-# exits 0 without printing any of these. Interruption exits with
+# precompile phase. If another indexer of this Julia version holds the indexing
+# lock, exits 0 without printing any of these. Interruption exits with
 # INTERRUPTED_EXIT_CODE so the supervisor can tell it from a crash.
 
 include(joinpath(@__DIR__, "..", "records.jl"))
@@ -24,7 +24,7 @@ function main(args)
     policy, path = args[1], args[2]
     packages = parse_entry.(args[3:end])
     mkpath(dirname(path))
-    lock = Pidfile.trymkpidlock(path * ".indexing"; stale_age = LOCK_STALE_AGE_S)
+    lock = Pidfile.trymkpidlock(path * INDEXING_LOCK_SUFFIX; stale_age = LOCK_STALE_AGE_S)
     lock === false && return
     try
         policy == "background" && precompile_packages(packages)
@@ -65,11 +65,11 @@ function index_package(path, id::Base.PkgId, version::Union{VersionNumber, Nothi
     report("indexing $(id.uuid)")
     record = try
         names = Base.invokelatest(extract_names, Base.require(id), id)
-        if version === nothing names else with_versions(names, [version]) end
+        if version === nothing names else with_sightings(names, Sighting[(; version, julia = JULIA_MINOR)]) end
     catch err
         is_interrupt(err) && rethrow()
         @error "Failed to load $(id.name) for indexing" exception = (err, catch_backtrace())
-        PkgFailure(id, version, first(sprint(showerror, err), MAX_MESSAGE_CHARS))
+        PkgFailure(id, (; version, julia = JULIA_MINOR), first(sprint(showerror, err), MAX_MESSAGE_CHARS))
     end
     write_catalog_changes!(path, CatalogRecord[record])
     report("indexed $(id.uuid)")

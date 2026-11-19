@@ -8,13 +8,15 @@
 """
     Catalog
 
-Catalog records grouped by package id, plus a name -> providers index over
-each package's newest [`PkgNames`](@ref) (exported and re-exported names).
-Build with [`build_catalog`](@ref).
+Catalog records grouped by package id, as seen from Julia minor version
+`julia`, plus a name -> providers index over each package's newest
+[`PkgNames`](@ref) there (exported and re-exported names). Build with
+[`build_catalog`](@ref).
 """
 struct Catalog
     records::Dict{Base.PkgId, Vector{CatalogRecord}}
     providers::Dict{Symbol, Vector{Tuple{Base.PkgId, Bool}}}
+    julia::VersionNumber
 end
 
 """
@@ -44,24 +46,25 @@ struct LoadRequest
 end
 
 """
-    build_catalog(records) -> Catalog
+    build_catalog(records; julia = JULIA_MINOR) -> Catalog
 
-Fold `records` in order with [`merge_observation`](@ref).
+Fold `records` in order with [`merge_observation`](@ref), for lookups from
+Julia minor version `julia`.
 """
-function build_catalog(records)
+function build_catalog(records; julia::VersionNumber = JULIA_MINOR)
     grouped = Dict{Base.PkgId, Vector{CatalogRecord}}()
     for record in records
         grouped[record.id] = merge_observation(get(grouped, record.id, CatalogRecord[]), record)
     end
     providers = Dict{Symbol, Vector{Tuple{Base.PkgId, Bool}}}()
     for id in sort!(collect(keys(grouped)); by = id -> (id.name, string(id.uuid)))
-        newest = newest_names(grouped[id])
+        newest = best_names(grouped[id], nothing, julia)
         newest === nothing && continue
         for name in newest.exported ∪ newest.reexported
             push!(get!(providers, name, Tuple{Base.PkgId, Bool}[]), (id, name in newest.exported))
         end
     end
-    Catalog(grouped, providers)
+    Catalog(grouped, providers, julia)
 end
 
 "All records for `id`, or an empty vector."
@@ -70,19 +73,18 @@ records_of(cat::Catalog, id::Base.PkgId) = get(cat.records, id, CatalogRecord[])
 """
     names_at(cat, id, version) -> Union{PkgNames, Nothing}
 
-The record of `id` containing `version`; for `nothing`, its newest record.
+The record of `id` seen at package `version` on the catalog's Julia minor,
+or failing that on the nearest other minor, older ones first; for `nothing`,
+the newest version seen there. A record seen only on another minor stands in
+until `id` is indexed on this one (see [`to_index`](@ref)).
 """
-function names_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing})
-    version === nothing && return newest_names(records_of(cat, id))
-    records = records_of(cat, id)
-    index = findfirst(r -> r isa PkgNames && version in r.versions, records)
-    if index !== nothing records[index] end
-end
+names_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing}) =
+    best_names(records_of(cat, id), version, cat.julia)
 
-"The [`PkgFailure`](@ref) recorded for `id` at `version`, or `nothing`."
+"The [`PkgFailure`](@ref) recorded for `id` at `version` on the catalog's Julia minor, or `nothing`."
 function failed_at(cat::Catalog, id::Base.PkgId, version::Union{VersionNumber, Nothing})
     records = records_of(cat, id)
-    index = findfirst(r -> r isa PkgFailure && r.version == version, records)
+    index = findfirst(r -> r isa PkgFailure && r.at == (; version, cat.julia), records)
     if index !== nothing records[index] end
 end
 
@@ -204,18 +206,40 @@ end
 """
     to_index(cat, wanted) -> Vector{Base.PkgId}
 
-Packages in `wanted` whose version has neither a namespace record nor a
-recorded failure. A `nothing` version is covered by any namespace record.
+Packages in `wanted` whose version has, on the catalog's Julia minor, neither
+a namespace record nor a recorded failure. A `nothing` version is covered by
+any namespace record there.
 """
 function to_index(cat::Catalog, wanted::AbstractDict)
+    function has_names_here(id, version)
+        any(records_of(cat, id)) do record
+            record isa PkgNames && any(record.at) do sighting
+                sighting.julia == cat.julia && (version === nothing || sighting.version == version)
+            end
+        end
+    end
     missing_ids = [id for (id, version) in wanted
-                   if names_at(cat, id, version) === nothing && failed_at(cat, id, version) === nothing]
+                   if !has_names_here(id, version) && failed_at(cat, id, version) === nothing]
     sort!(missing_ids; by = id -> (id.name, string(id.uuid)))
 end
 
 # ── Helpers ──
 
-function newest_names(records::Vector{CatalogRecord})
-    names = filter(r -> r isa PkgNames, records)
-    if !isempty(names) argmax(r -> maximum(r.versions; init = v"0"), names) end
+"The record of `records` that [`names_at`](@ref) picks for `version` from Julia minor `julia`."
+function best_names(records::Vector{CatalogRecord}, version::Union{VersionNumber, Nothing}, julia::VersionNumber)
+    best, best_rank = nothing, nothing
+    for record in records
+        record isa PkgNames || continue
+        for sighting in record.at
+            version === nothing || sighting.version == version || continue
+            # Higher is better: this minor, then older ones nearest first, then newer; then the newest version.
+            (; major, minor) = sighting.julia
+            is_older = sighting.julia <= julia
+            rank = (is_older, if is_older; (major, minor) else (-major, -minor) end, version_order(sighting.version))
+            if best_rank === nothing || rank > best_rank
+                best, best_rank = record, rank
+            end
+        end
+    end
+    best
 end

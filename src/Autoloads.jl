@@ -8,12 +8,13 @@ Management commands, also available as the `pkg> autoloads` command group:
 [`init`](@ref) sets up the global autoloads environment; [`add`](@ref),
 [`remove`](@ref) and [`update`](@ref) change its packages; [`status`](@ref)
 reports what autoloads. They raise [`PkgOperationFailed`](@ref),
-[`MemberMissing`](@ref) and, for invalid settings, [`ConfigError`](@ref).
+[`MemberMissing`](@ref), [`CatalogTooNew`](@ref) and, for invalid settings,
+[`ConfigError`](@ref).
 Everything else is internal.
 """
 module Autoloads
 
-public init, add, remove, update, status, PkgOperationFailed, MemberMissing, ConfigError
+public init, add, remove, update, status, PkgOperationFailed, MemberMissing, CatalogTooNew, ConfigError
 
 include("records.jl")
 include("catalogfile.jl")
