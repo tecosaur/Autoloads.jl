@@ -49,7 +49,7 @@ const Event = Union{Refresh, Observed, Flush}
 # (mtime, size, inode) of each watched file.
 const FileStamp = Tuple{Float64, Int64, UInt64}
 # The catalog is apart: its changes call for a refresh, but not for retrying failed loads.
-const EnvStamp = @NamedTuple{active::Union{String, Nothing}, environment::NTuple{8, FileStamp}, catalog::FileStamp}
+const EnvStamp = @NamedTuple{active::Union{String, Nothing}, environment::NTuple{9, FileStamp}, catalog::FileStamp}
 
 """
     Runtime(events, member, catalog_path)
@@ -437,14 +437,14 @@ end
 
 """
 The active project and the stamps of the files whose change calls for a
-refresh: the `environment` (the root and active projects with their
-manifests and local preferences) and the `catalog`.
+refresh: the `environment` (the root, member and active projects, and the
+root and active manifests and local preferences) and the `catalog`.
 """
 function env_stamp(runtime::Runtime)
     active = Base.active_project()
     root_project = joinpath(dirname(runtime.member), "Project.toml")
     files = (root_project, manifest_of(root_project), preferences_files(root_project)...,
-             active, manifest_of(active), preferences_files(active)...)
+             joinpath(runtime.member, "Project.toml"), active, manifest_of(active), preferences_files(active)...)
     (; active, environment = map(file_stamp, files), catalog = file_stamp(runtime.catalog_path))
 end
 

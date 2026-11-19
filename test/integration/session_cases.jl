@@ -128,6 +128,10 @@ elseif GROUP == "sequencing"
         touch(joinpath(dirname(MEMBER), "Project.toml"))
         run_input("1")
         @test isempty(Ext.LOAD.failed)
+        push!(Ext.LOAD.failed, failing)
+        touch(joinpath(MEMBER, "Project.toml"))
+        run_input("1")
+        @test isempty(Ext.LOAD.failed)
     end
     @testset "a stopped worker handles no more batches" begin
         flush_worker()
