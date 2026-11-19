@@ -75,6 +75,56 @@ function traced_compilation(script)
     split(last(split(output, "START\n")), "END\n")
 end
 
+"A pseudo-terminal, as Julia's REPL tests open one: its subordinate end, for a process's stdio, and its controller."
+function open_pty()
+    flags = Base.Filesystem.JL_O_RDWR | Base.Filesystem.JL_O_NOCTTY
+    controller = ccall(:posix_openpt, Cint, (Cint,), flags)
+    controller == -1 && error("Opening a pseudo-terminal failed: posix_openpt returned -1")
+    ccall(:grantpt, Cint, (Cint,), controller) == 0 && ccall(:unlockpt, Cint, (Cint,), controller) == 0 ||
+        error("Unlocking the pseudo-terminal failed: grantpt or unlockpt returned nonzero")
+    subordinate = ccall(:open, Cint, (Ptr{UInt8}, Cint, UInt32...), ccall(:ptsname, Ptr{UInt8}, (Cint,), controller), flags)
+    RawFD(subordinate), Base.TTY(RawFD(controller))
+end
+
+"""
+Run `cmd`, an interactive REPL, on a pseudo-terminal (piped input gets no REPL), type `input` at its first prompt, and
+return the first capture of `pattern` in what it prints, or `nothing` after 120 s.
+"""
+function repl_capture(cmd, input, pattern::Regex)
+    subordinate, terminal = open_pty()
+    process = run(cmd, subordinate, subordinate, subordinate; wait = false)
+    Base.close_stdio(subordinate)
+    output = Ref("")
+    @async try
+        while !eof(terminal)
+            output[] *= String(readavailable(terminal))
+        end
+    catch err
+        err isa Base.IOError || rethrow()
+    end
+    timedwait(() -> occursin("julia> ", output[]), 120)
+    write(terminal, input, '\r')
+    timedwait(() -> occursin(pattern, output[]), 120)
+    kill(process, Base.SIGKILL)
+    wait(process)
+    close(terminal)
+    found = match(pattern, output[])
+    if found !== nothing found[1] end
+end
+
+Sys.iswindows() || @testset "a REPL started with only Autoloads loaded integrates it" begin
+    # Away from the user's environments, which the worker maintains.
+    depot = mktempdir()
+    write(joinpath(mkpath(joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)")), "Project.toml"), "")
+    julia = joinpath(Sys.BINDIR, Base.julia_exename())
+    cmd = addenv(`$julia --startup-file=no --history-file=no --project=$(Base.active_project()) -i -e "using Autoloads"`,
+                 "JULIA_DEPOT_PATH" => join([depot; DEPOT_PATH], ':'), "XDG_STATE_HOME" => mktempdir(), "TERM" => "xterm")
+    is_integrated = "Base.get_extension(Autoloads, :AutoloadsREPLExt) !== nothing"
+    # Split, so the echoed input cannot match.
+    input = "timedwait(() -> $is_integrated, 60); print(\"INTEG\", \"RATED=\", $is_integrated)"
+    @test repl_capture(cmd, input, r"INTEGRATED=(true|false)") == "true"
+end
+
 @testset "inputs compile nothing of Autoloads'" begin
     @test !occursin("Autoloads", first(traced_compilation(SCRIPT)))
 end

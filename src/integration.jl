@@ -5,6 +5,7 @@
 # not before it. On the REPL's evaluation thread, as loading packages from two
 # threads at once crashes Julia 1.13.
 
+const REPL_ID = Base.PkgId(Base.UUID("3fa0cd96-eef1-5676-8a61-b3b8758bbffb"), "REPL")
 # The extension's other trigger: a stdlib nothing else loads, used as a latch.
 const LATCH_ID = Base.PkgId(Base.UUID("9fa8497b-333b-5362-9e8d-4d0656e87820"), "Future")
 const PROMPT_POLL_S = 0.02
@@ -40,7 +41,8 @@ function __init__()
     nothing
 end
 
-load_integration() = Base.require(LATCH_ID)
+# The running REPL only counts as loaded, and so triggers the extension, once required.
+load_integration() = (Base.require(REPL_ID); Base.require(LATCH_ID))
 
 # An `atreplinit` hook: the REPL's backend copies `repl_ast_transforms` afterwards.
 function defer_integration(@nospecialize(repl))
