@@ -23,12 +23,6 @@ const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funca
 # `nothing` without a REPL mode; then every use below fails soft.
 const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
 
-# Built when precompiling, against the Pkg it is loaded with (a different Pkg
-# recompiles this extension), so building costs no load time; a failure is
-# kept as its message for `register_commands!` to report.
-# `init` and `status` are called splatted: as `init()` and `status(pkgs...)`.
-# Other Julia versions' changes are resolved when each next starts a session.
-
 "Completions for a package argument of `autoloads status`: the autoload packages; none while the settings are invalid."
 function complete_autoload_packages(options, partial, offset, index; kwargs...)
     autoloads = try
@@ -40,6 +34,11 @@ function complete_autoload_packages(options, partial, offset, index; kwargs...)
     sort!([id.name for id in keys(autoloads.autoload)])
 end
 
+# Built when precompiling, against the Pkg it is loaded with (a different Pkg
+# recompiles this extension), so building costs no load time; a failure is
+# kept as its message for `register_commands!` to report.
+# `init` and `status` are called splatted: as `init()` and `status(pkgs...)`.
+# Other Julia versions' changes are resolved when each next starts a session.
 const GLOBAL_OPTION = [Pair{Symbol, Any}[:name => "global", :short_name => "g", :api => :all_versions => true]]
 const COMMANDS = try
     REPLMode === nothing && error("this Pkg has no REPLMode")
