@@ -21,16 +21,16 @@ const Ext = Base.get_extension(Autoloads, :AutoloadsPkgExt)
 const PACKAGE_SPECS = Pkg.REPLMode.SPECS["package"]
 
 "Run `body(notified)` with `ENV_CHANGED` counting calls, restoring the package specs afterwards."
-function with_notifications(body)
-    saved_specs = copy(PACKAGE_SPECS)
-    saved_hook = Autoloads.ENV_CHANGED[]
+function withnotifications(body)
+    savedspecs = copy(PACKAGE_SPECS)
+    savedhook = Autoloads.ENV_CHANGED[]
     notified = Ref(0)
     Autoloads.ENV_CHANGED[] = () -> notified[] += 1
     try
         body(notified)
     finally
-        Autoloads.ENV_CHANGED[] = saved_hook
-        merge!(empty!(PACKAGE_SPECS), saved_specs)
+        Autoloads.ENV_CHANGED[] = savedhook
+        merge!(empty!(PACKAGE_SPECS), savedspecs)
     end
 end
 
@@ -73,7 +73,7 @@ end
         @test parsed("up")[1] isa Ext.RefreshingApi
         @test parsed("update")[1] isa Ext.RefreshingApi
         @test !(PACKAGE_SPECS["activate"].api isa Ext.RefreshingApi)
-        with_notifications() do notified
+        withnotifications() do notified
             calls = []
             api = Ext.RefreshingApi((args...; kwargs...) -> (push!(calls, (args, kwargs)); :done))
             @test api(1, 2; key = 3) == :done
@@ -85,34 +85,34 @@ end
         end
     end
     @testset "up includes the autoloads when the global environment is active" begin
-        with_notifications() do _
+        withnotifications() do _
             workspace, spec, active = Ref(false), PACKAGE_SPECS["up"], Base.active_project()
             fake = (args...; kwargs...) -> workspace[] = kwargs[:workspace]
             PACKAGE_SPECS["up"] = Pkg.REPLMode.CommandSpec((f === :api ? fake : getfield(spec, f)
                                                            for f in fieldnames(Pkg.REPLMode.CommandSpec))...)
-            Ext.wrap_pkg_commands!()
+            Ext.wrappkgcommands!()
             try
                 Base.set_active_project(joinpath(mktempdir(), "Project.toml"))
                 PACKAGE_SPECS["up"].api()
                 @test !workspace[]
-                Base.set_active_project(joinpath(Autoloads.global_env_dir(), "Project.toml"))
+                Base.set_active_project(joinpath(Autoloads.globalenvdir(), "Project.toml"))
                 PACKAGE_SPECS["up"].api()
                 @test workspace[]
                 @testset "but not when the settings are invalid" begin
                     depot = mktempdir()
-                    # Created first, so that `global_env_dir` picks it over the user's.
-                    global_project = joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)", "Project.toml")
-                    mkpath(dirname(global_project))
-                    write(global_project, """
+                    # Created first, so that `globalenvdir` picks it over the user's.
+                    globalproject = joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)", "Project.toml")
+                    mkpath(dirname(globalproject))
+                    write(globalproject, """
                         [deps]
                         Autoloads = "$(Base.PkgId(Autoloads).uuid)"
 
                         [preferences.Autoloads]
-                        up_hook = "no"
+                        uphook = "no"
                         """)
                     pushfirst!(DEPOT_PATH, depot)
                     try
-                        Base.set_active_project(global_project)
+                        Base.set_active_project(globalproject)
                         @test_logs (:warn, r"settings are invalid") PACKAGE_SPECS["up"].api()
                         @test !workspace[]
                     finally
@@ -125,27 +125,27 @@ end
         end
     end
     @testset "wrapping is idempotent and coexists with other wrappers" begin
-        with_notifications() do notified
+        withnotifications() do notified
             before = PACKAGE_SPECS["up"]
-            Ext.wrap_pkg_commands!()
+            Ext.wrappkgcommands!()
             @test PACKAGE_SPECS["up"] === before
             @test !(PACKAGE_SPECS["up"].api.api isa Ext.RefreshingApi)
             for name in ("activate", "add")
-                third_party_calls = Ref(0)
-                third_party = (args...; kwargs...) -> (third_party_calls[] += 1; nothing)
+                thirdpartycalls = Ref(0)
+                thirdparty = (args...; kwargs...) -> (thirdpartycalls[] += 1; nothing)
                 spec = PACKAGE_SPECS[name]
-                PACKAGE_SPECS[name] = Pkg.REPLMode.CommandSpec((f === :api ? third_party : getfield(spec, f)
+                PACKAGE_SPECS[name] = Pkg.REPLMode.CommandSpec((f === :api ? thirdparty : getfield(spec, f)
                                                                for f in fieldnames(Pkg.REPLMode.CommandSpec))...)
-                Ext.wrap_pkg_commands!()
+                Ext.wrappkgcommands!()
                 api = PACKAGE_SPECS[name].api
                 api()
-                @test third_party_calls[] == 1
-                @test name == "activate" ? api === third_party : (api isa Ext.RefreshingApi && notified[] == 1)
+                @test thirdpartycalls[] == 1
+                @test name == "activate" ? api === thirdparty : (api isa Ext.RefreshingApi && notified[] == 1)
             end
         end
     end
     @testset "an unrecognised Pkg layout warns, wraps nothing and keeps the help" begin
-        with_notifications() do _
+        withnotifications() do _
             delete!(PACKAGE_SPECS, "pin")
             snapshot = copy(PACKAGE_SPECS)
             @test_logs (:warn, r"cannot refresh") Ext.__init__()

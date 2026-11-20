@@ -7,8 +7,8 @@
 module AutoloadsPkgExt
 
 using Autoloads, Pkg, StyledStrings
-using Autoloads: PkgFailure, ManifestGraph, ConfigError, names_at, failed_at, autoload_names,
-    package_config, owner
+using Autoloads: PkgFailure, ManifestGraph, ConfigError, namesat, failedat, autoloadnames, isselected,
+    packageconfig, owner
 
 # The face of each kind of name (`Autoloads.NAME_KINDS`, and `@` for macros), in the order About.jl lists them.
 const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funcall, ':' => :julia_type,
@@ -17,9 +17,9 @@ const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funca
 # `nothing` without a REPL mode; then every use below fails soft.
 const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
 
-function complete_autoload_packages(options, partial, offset, index; kwargs...)
+function completeautoloads(options, partial, offset, index; kwargs...)
     autoloads = try
-        Autoloads.read_autoloads(Autoloads.global_env_dir(), Autoloads.catalog_path())
+        Autoloads.readautoloads(Autoloads.globalenvdir(), Autoloads.catalogpath())
     catch err
         err isa ConfigError || rethrow()
         return String[]
@@ -29,10 +29,9 @@ end
 
 # Built when precompiling, against the Pkg it is loaded with (a different Pkg
 # recompiles this extension), so building costs no load time; a failure is
-# kept as its message for `register_commands!` to report.
+# kept as its message for `registercommands!` to report.
 # `init` and `status` are called splatted: as `init()` and `status(pkgs...)`.
-# Other Julia versions' changes are resolved when each next starts a session.
-const GLOBAL_OPTION = [Pair{Symbol, Any}[:name => "global", :short_name => "g", :api => :all_versions => true]]
+const GLOBAL_OPTION = [Pair{Symbol, Any}[:name => "global", :short_name => "g", :api => :allversions => true]]
 const COMMANDS = try
     REPLMode === nothing && error("this Pkg has no REPLMode")
     let command = (; help, kwargs...) -> REPLMode.CommandSpec(; help = REPLMode.Markdown.parse(help), kwargs...)
@@ -76,7 +75,7 @@ const COMMANDS = try
                 `-g`, every other Julia version's autoloads environment is updated too.
                 """),
         command(name = "status", short_name = "st", api = Autoloads.status, arg_count = 0 => Inf,
-                completions = complete_autoload_packages,
+                completions = completeautoloads,
                 description = "show what autoloads",
                 help = """
                     autoloads [st|status] [pkg ...]
@@ -104,28 +103,29 @@ end
 
 function (refreshing::RefreshingApi)(args...; kwargs...)
     result = refreshing.api(args...; kwargs...)
-    Autoloads.notify_env_change()
+    Autoloads.notifyenvchange()
     result
 end
 
 """
-    wrap_pkg_commands!()
+    wrappkgcommands!()
 
 Make the `ENV_CHANGING_COMMANDS` request an autoload refresh, and `up` in the
-global environment also update the autoload packages unless `up_hook` is off.
+global environment also update the autoload packages unless `uphook` is off.
 Idempotent; warns and changes nothing if Pkg's layout is unexpected.
 """
-function wrap_pkg_commands!()
-    specs = find_package_specs()
-    if specs === nothing
-        @warn "Autoloads cannot refresh after `pkg>` commands: this Pkg's REPLMode.SPECS/CommandSpec layout is not recognised" pkg_version = Pkg.pkgversion(Pkg)
+function wrappkgcommands!()
+    specs = if isdefined(REPLMode, :SPECS) && isdefined(REPLMode, :CommandSpec) get(REPLMode.SPECS, "package", nothing) end
+    if !(specs isa Dict{String, REPLMode.CommandSpec}) || fieldnames(REPLMode.CommandSpec) != COMMAND_SPEC_FIELDS ||
+       !all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS)
+        @warn "Autoloads cannot refresh after `pkg>` commands: this Pkg's REPLMode.SPECS/CommandSpec layout is not recognised" version = Pkg.pkgversion(Pkg)
         return
     end
     up = specs["up"]
-    function with_autoloads()
-        Base.active_project() == joinpath(Autoloads.global_env_dir(), "Project.toml") || return false
+    function withautoloads()
+        Base.active_project() == joinpath(Autoloads.globalenvdir(), "Project.toml") || return false
         try
-            Autoloads.load_config().up_hook
+            Autoloads.loadconfig().uphook
         catch err
             err isa ConfigError || rethrow()
             @warn "The Autoloads settings are invalid, so `up` leaves the autoload packages alone" exception = err
@@ -135,7 +135,7 @@ function wrap_pkg_commands!()
     for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
         original.api isa RefreshingApi && continue
         api = RefreshingApi(if original === up
-                                (args...; kwargs...) -> original.api(args...; workspace = with_autoloads(), kwargs...)
+                                (args...; kwargs...) -> original.api(args...; workspace = withautoloads(), kwargs...)
                             else original.api end)
         wrapped = REPLMode.CommandSpec((if f === :api api else getfield(original, f) end for f in COMMAND_SPEC_FIELDS)...)
         for (name, spec) in specs
@@ -144,24 +144,16 @@ function wrap_pkg_commands!()
     end
 end
 
-function find_package_specs()
-    isdefined(REPLMode, :SPECS) && isdefined(REPLMode, :CommandSpec) || return nothing
-    specs = get(REPLMode.SPECS, "package", nothing)
-    specs isa Dict{String, REPLMode.CommandSpec} || return nothing
-    fieldnames(REPLMode.CommandSpec) == COMMAND_SPEC_FIELDS || return nothing
-    if all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS) specs end
-end
-
-function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple)
-    (; cfg, member, member_env, active, project_env, registry) = autoloads
+function Autoloads.printstatus(@nospecialize(io::IO), autoloads::NamedTuple)
+    (; cfg, member, memberenv, active, projectenv, registry) = autoloads
     print(io, styled"{bold:Global autoloads}  {shadow:$(Base.contractuser(member))}")
     isfile(joinpath(member, "Project.toml")) ||
         print(io, styled"  {warning:(missing; create it with `pkg> autoloads init`)}")
     println(io)
-    print_packages(io, autoloads, member_env.deps, member_env.graph)
+    printpackages(io, autoloads, memberenv.deps, memberenv.graph)
     println(io, styled"\n{bold:Project autoloads}  {shadow:$(Base.contractuser(something(active, \"\")))}")
-    print_packages(io, autoloads, [id for id in project_env.deps if cfg.project === nothing || id.name in cfg.project],
-                   project_env.graph)
+    printpackages(io, autoloads, [id for id in projectenv.deps if isselected(cfg, id.name)],
+                   projectenv.graph)
     for (title, note, claims) in (("Shared names", "autoloaded once one of their packages is loaded", registry.shared),
                                   ("Ambiguous names", "not autoloaded", registry.ambiguous))
         isempty(claims) && continue
@@ -172,13 +164,13 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple)
         end
         for (claimants, names) in sort!(collect(claimed); by = first)
             println(io, "  ", claimants, styled" {shadow:($(length(names)))}")
-            print_wrapped(io, sort!(names; by = lowercase))
+            printwrapped(io, sort!(names; by = lowercase))
         end
     end
     println(io, styled"\n{bold:Precompile policy}  $(lowercase(string(cfg.policy)))")
 end
 
-function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple, pkgs::AbstractString...)
+function Autoloads.printstatus(@nospecialize(io::IO), autoloads::NamedTuple, pkgs::AbstractString...)
     ids = Dict(id.name => id for id in keys(autoloads.autoload))
     for pkg in pkgs
         haskey(ids, pkg) || throw(ArgumentError("Autoloads.status: $pkg is not an autoload package here. \
@@ -186,61 +178,61 @@ function Autoloads.print_status(@nospecialize(io::IO), autoloads::NamedTuple, pk
     end
     for (i, pkg) in enumerate(pkgs)
         i == 1 || println(io)
-        print_package(io, autoloads, ids[pkg])
+        printpackage(io, autoloads, ids[pkg])
     end
 end
 
-function print_package(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.PkgId)
+function printpackage(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.PkgId)
     (; cfg, cat, autoload, registry) = autoloads
     version = autoload[id]
-    glyph, state = index_cells(index_state(autoloads, id, version), (0, 0))
+    glyph, state = indexcells(indexstate(autoloads, id, version), (0, 0))
     println(io, glyph, styled" {bold:$(id.name)}", if version === nothing "" else styled" {shadow:v$version}" end, "  ", state)
-    record = names_at(cat, id, version)
+    record = namesat(cat, id, version)
     record === nothing && return
     kind(name) = if startswith(String(name), '@') '@' else get(record.kinds, name, '?') end
     rank(name) = something(findfirst(==(kind(name)) ∘ first, KIND_FACES), length(KIND_FACES) + 1)
-    by_kind(names) = sort!(collect(names); by = name -> (rank(name), lowercase(String(name))))
+    bykind(names) = sort!(collect(names); by = name -> (rank(name), lowercase(String(name))))
     function shown(name)
         face = last(get(KIND_FACES, rank(name), '?' => :default))
         styled"{code,$face:$name}"
     end
-    function print_names(title, note, names)
+    offered = bykind(autoloadnames(record, packageconfig(cfg, id.name)))
+    function printnames(title, note, names)
         isempty(names) && return
         println(io, styled"\n  {bold:$title} ($(length(names)))", if isempty(note) "" else styled"  {shadow:$note}" end)
-        print_wrapped(io, names)
+        printwrapped(io, names)
     end
-    function print_claimed(title, note, claims)
+    function printclaimed(title, note, claims)
         others(name) = join(sort!([other.name for other in claims[name] if other != id]), ", ")
-        print_names(title, note, [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(claims, name)])
+        printnames(title, note, [shown(name) * styled" {shadow:($(others(name)))}" for name in offered if haskey(claims, name)])
     end
-    offered = by_kind(autoload_names(record, package_config(cfg, id.name)))
-    print_names("Autoloads", "", [shown(name) for name in offered if owner(registry, name) == id])
-    print_claimed("Shared", "autoloaded once one of their packages is loaded", registry.shared)
-    print_claimed("Ambiguous", "not autoloaded", registry.ambiguous)
-    print_names("Re-exported", "loads the owner",
+    printnames("Autoloads", "", [shown(name) for name in offered if owner(registry, name) == id])
+    printclaimed("Shared", "autoloaded once one of their packages is loaded", registry.shared)
+    printclaimed("Ambiguous", "not autoloaded", registry.ambiguous)
+    printnames("Re-exported", "loads the owner",
                 [shown(name) * styled" {shadow:($(owner(registry, name).name))}" for name in offered
                  if owner(registry, name) ∉ (id, nothing)])
-    print_names("Excluded", "by the settings", map(shown, by_kind(setdiff(record.exported ∪ record.reexported, offered))))
-    print_names("Public", "not autoloaded", map(shown, by_kind(record.public)))
+    printnames("Excluded", "by the settings", map(shown, bykind(setdiff(record.exported ∪ record.reexported, offered))))
+    printnames("Public", "not autoloaded", map(shown, bykind(record.public)))
 end
 
-function print_packages(@nospecialize(io::IO), autoloads::NamedTuple, ids::Vector{Base.PkgId}, graph::ManifestGraph)
+function printpackages(@nospecialize(io::IO), autoloads::NamedTuple, ids::Vector{Base.PkgId}, graph::ManifestGraph)
     isempty(ids) && return println(io, styled"  {shadow:(none)}")
     rows = map(sort(ids; by = id -> id.name)) do id
         version = get(graph.versions, id.uuid, nothing)
-        (id.name, if version === nothing "" else "v$version" end, index_state(autoloads, id, version))
+        (id.name, if version === nothing "" else "v$version" end, indexstate(autoloads, id, version))
     end
-    name_width, version_width = maximum(textwidth ∘ first, rows), maximum(row -> textwidth(row[2]), rows)
+    namewidth, versionwidth = maximum(textwidth ∘ first, rows), maximum(row -> textwidth(row[2]), rows)
     counts = [state for (_, _, state) in rows if state isa NTuple{2, Int}]
-    count_widths = (maximum(ndigits ∘ first, counts; init = 0), maximum(ndigits ∘ last, counts; init = 0))
+    countwidths = (maximum(ndigits ∘ first, counts; init = 0), maximum(ndigits ∘ last, counts; init = 0))
     for (name, version, state) in rows
-        glyph, description = index_cells(state, count_widths)
-        println(io, "  ", glyph, " ", rpad(name, name_width), "  ", styled"{shadow:$(rpad(version, version_width))}",
+        glyph, description = indexcells(state, countwidths)
+        println(io, "  ", glyph, " ", rpad(name, namewidth), "  ", styled"{shadow:$(rpad(version, versionwidth))}",
                 "  ", description)
     end
 end
 
-function print_wrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
+function printwrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     line = "   "
     for (i, name) in enumerate(names)
         entry = if i < length(names) name * "," else name end
@@ -253,36 +245,30 @@ function print_wrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     println(io, line)
 end
 
-"""
-    index_state(autoloads, id, version)
-
-How `id` at `version` is indexed: its `(exports, public)` counts, its `PkgFailure`, or `nothing`.
-"""
-function index_state((; cat, cfg)::NamedTuple, id::Base.PkgId, version::Union{VersionNumber, Nothing})
-    record = names_at(cat, id, version)
-    record === nothing && return failed_at(cat, id, version)
-    (length(autoload_names(record, package_config(cfg, id.name))), length(record.public))
+function indexstate((; cat, cfg)::NamedTuple, id::Base.PkgId, version::Union{VersionNumber, Nothing})
+    record = namesat(cat, id, version)
+    record === nothing && return failedat(cat, id, version)
+    (length(autoloadnames(record, packageconfig(cfg, id.name))), length(record.public))
 end
 
-# The glyph and description of an `index_state`; `widths` align the counts of a table's rows.
-index_cells(::Nothing, widths) = styled"{warning:○}", styled"{warning:not indexed}"
-index_cells(failure::PkgFailure, widths) =
+indexcells(::Nothing, widths) = styled"{warning:○}", styled"{warning:not indexed}"
+indexcells(failure::PkgFailure, widths) =
     styled"{error:✗}", styled"{error:failed:} $(first(split(failure.message, '\n')))"
 
-function index_cells((exports, public)::NTuple{2, Int}, (exports_width, public_width))
+function indexcells((exports, public)::NTuple{2, Int}, (exportswidth, publicwidth))
     noun = if exports == 1 "export" else "exports" end
-    counts = styled"{blue:$(lpad(exports, exports_width))} $noun"
+    counts = styled"{blue:$(lpad(exports, exportswidth))} $noun"
     styled"{success:✓}", if public == 0 counts else
-        counts * rpad(",", 9 - length(noun)) * styled"{magenta:$(lpad(public, public_width))} public"
+        counts * rpad(",", 9 - length(noun)) * styled"{magenta:$(lpad(public, publicwidth))} public"
     end
 end
 
 function __init__()
-    register_commands!()
-    wrap_pkg_commands!()
+    registercommands!()
+    wrappkgcommands!()
 end
 
-function register_commands!()
+function registercommands!()
     try
         COMMANDS isa String && error(COMMANDS)
         specs = Dict{String, REPLMode.CommandSpec}()
@@ -294,7 +280,7 @@ function register_commands!()
         copy!(REPLMode.help.content, REPLMode.gen_help().content)
     catch err
         @warn "Autoloads cannot add the `pkg> autoloads` commands to this Pkg's REPL; call `Autoloads.add` and \
-               the other management functions instead" pkg_version = Pkg.pkgversion(Pkg) exception = err
+               the other management functions instead" version = Pkg.pkgversion(Pkg) exception = err
     end
     nothing
 end
@@ -302,10 +288,10 @@ end
 # Precompile workload: an empty global environment, but the user's settings and active project.
 if ccall(:jl_generating_output, Cint, ()) == 1
     try
-        autoloads = Autoloads.read_autoloads(mktempdir(), joinpath(mktempdir(), "catalog"))
-        Autoloads.print_status(devnull, autoloads)
-        foreach(id -> Autoloads.print_status(devnull, autoloads, id.name), first(keys(autoloads.autoload), 1))
-        complete_autoload_packages(nothing, "", 1, 1)
+        autoloads = Autoloads.readautoloads(mktempdir(), joinpath(mktempdir(), "catalog"))
+        Autoloads.printstatus(devnull, autoloads)
+        foreach(id -> Autoloads.printstatus(devnull, autoloads, id.name), first(keys(autoloads.autoload), 1))
+        completeautoloads(nothing, "", 1, 1)
     catch err
         err isa ConfigError || rethrow()
     end

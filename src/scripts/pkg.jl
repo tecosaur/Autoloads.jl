@@ -9,16 +9,16 @@ const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b
 
 function main(op, pkgs)
     # A git URL (`url#rev` picks a revision), or else a registered name.
-    function package_spec(pkg)
-        is_url = occursin("://", pkg) || startswith(pkg, "git@") || endswith(pkg, ".git")
-        is_url || return Pkg.PackageSpec(name = pkg)
+    function packagespec(pkg)
+        isurl = occursin("://", pkg) || startswith(pkg, "git@") || endswith(pkg, ".git")
+        isurl || return Pkg.PackageSpec(name = pkg)
         url, rev = if occursin('#', pkg) String.(split(pkg, '#'; limit = 2)) else (pkg, nothing) end
         Pkg.PackageSpec(; url, rev)
     end
     if op == "add"
         paths = filter(isdir, pkgs)
         isempty(paths) || Pkg.develop([Pkg.PackageSpec(path = path) for path in paths])
-        specs = [package_spec(pkg) for pkg in pkgs if !isdir(pkg)]
+        specs = [packagespec(pkg) for pkg in pkgs if !isdir(pkg)]
         isempty(specs) || Pkg.add(specs)
     elseif op == "remove"
         Pkg.rm(pkgs)

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 """
-Load packages on demand at the REPL. Manage them with `init`, `add`, `remove`,
-`update` and `status`, or the `pkg> autoloads` commands.
+    Autoloads
+
+Load packages on demand in the REPL. Manage them with `pkg> autoloads` commands.
 """
 module Autoloads
 

@@ -32,19 +32,19 @@ end
 function __init__()
     isinteractive() || return
     if isdefined(Base, :active_repl)
-        errormonitor(schedule(Task(load_integration)))
+        errormonitor(schedule(Task(loadintegration)))
     else
-        atreplinit(defer_integration)
+        atreplinit(deferintegration)
     end
     nothing
 end
 
 # The running REPL only counts as loaded, and so triggers the extension, once required.
-load_integration() = (Base.require(REPL_ID); Base.require(LATCH_ID))
+loadintegration() = (Base.require(REPL_ID); Base.require(LATCH_ID))
 
 # An `atreplinit` hook: the REPL's backend copies `repl_ast_transforms` afterwards.
-function defer_integration(@nospecialize(repl))
-    lazy = LazyIntegration(errormonitor(Task(load_integration)), repl)
+function deferintegration(@nospecialize(repl))
+    lazy = LazyIntegration(errormonitor(Task(loadintegration)), repl)
     push!(parentmodule(typeof(repl)).repl_ast_transforms, lazy)
     Timer(lazy, PROMPT_POLL_S; interval = PROMPT_POLL_S)
     nothing
@@ -56,8 +56,8 @@ function finish(loading::Task)
 end
 
 precompile(__init__, ())
-precompile(load_integration, ())
-precompile(defer_integration, (Any,))
+precompile(loadintegration, ())
+precompile(deferintegration, (Any,))
 precompile(finish, (Task,))
 precompile(Tuple{LazyIntegration, Timer})
 precompile(Tuple{LazyIntegration, Expr})

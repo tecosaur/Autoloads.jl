@@ -5,7 +5,7 @@
 module TestSession
 
 using Test, REPL, Future, Autoloads
-using Autoloads: PkgNames, CatalogRecord, stdlib_ids, write_catalog_changes!, run_julia
+using Autoloads: PkgNames, CatalogRecord, stdlibids, writecatalog!, runjulia
 
 include("setup.jl")
 
@@ -16,8 +16,8 @@ const CASES = joinpath(@__DIR__, "session_cases.jl")
 const TEST_PROJECT = dirname(@__DIR__)
 const AUTOLOADS_UUID = Base.PkgId(Autoloads).uuid
 # The member group develops FixtureB into its member, so it gets a workspace of its own.
-const SHARED = build_workspace(; fixtures = (FIXTURE_A,))
-const CHANGING = build_workspace(; fixtures = (FIXTURE_A,))
+const SHARED = buildworkspace(; fixtures = (FIXTURE_A,))
+const CHANGING = buildworkspace(; fixtures = (FIXTURE_A,))
 # Stdlibs whose real names a test relies on (`@spawn`, `status`), or that
 # every catalog write loads (FileWatching).
 const REAL_STDLIBS = ("Distributed", "Pkg", "FileWatching", "Statistics")
@@ -26,34 +26,34 @@ const REAL_STDLIBS = ("Distributed", "Pkg", "FileWatching", "Statistics")
 The namespaces of the `REAL_STDLIBS`, extracted in a subprocess whose depot
 path starts with the workspace's, so no cache lands in the user's depot.
 """
-function real_stdlib_records(ws)
+function realstdlibrecords(ws)
     script = """
         push!(LOAD_PATH, ARGS[1])
         using Autoloads
-        for id in Autoloads.stdlib_ids()
-            id.name in ARGS[2:end] && println(Autoloads.catalog_line(Autoloads.extract_names(Base.require(id), id)))
+        for id in Autoloads.stdlibids()
+            id.name in ARGS[2:end] && println(Autoloads.catalogline(Autoloads.extractnames(Base.require(id), id)))
         end
         """
     output = IOBuffer()
-    process = withenv("JULIA_DEPOT_PATH" => ws.depot_path, "JULIA_LOAD_PATH" => nothing, "JULIA_PROJECT" => nothing) do
-        run_julia(`-e $script $TEST_PROJECT $REAL_STDLIBS`; project = nothing, output)
+    process = withenv("JULIA_DEPOT_PATH" => ws.depotpath, "JULIA_LOAD_PATH" => nothing, "JULIA_PROJECT" => nothing) do
+        runjulia(`-e $script $TEST_PROJECT $REAL_STDLIBS`; project = nothing, output)
     end
     wait(process)
     text = String(take!(output))
     success(process) || error("Extracting the names of $(join(REAL_STDLIBS, ", ")) failed:\n", text)
-    CatalogRecord[Autoloads.parse_catalog_line(line) for line in split(text, '\n'; keepempty = false)]
+    CatalogRecord[Autoloads.parsecatalogline(line) for line in split(text, '\n'; keepempty = false)]
 end
 
 "A record offering only the stdlib's own name, at its version, without loading it."
-function stdlib_stub(id::Base.PkgId)
+function stdlibstub(id::Base.PkgId)
     version = get(Base.parsed_toml(joinpath(Sys.STDLIB, id.name, "Project.toml")), "version", nothing)
     PkgNames(id, here(version === nothing ? nothing : VersionNumber(version)), Set([Symbol(id.name)]),
              Set{Symbol}(), Set{Symbol}())
 end
 
 # Seeded records are never re-indexed, so sessions start without indexing them.
-const STDLIB_RECORDS = CatalogRecord[real_stdlib_records(SHARED);
-                                     [stdlib_stub(id) for id in stdlib_ids() if id.name ∉ REAL_STDLIBS]]
+const STDLIB_RECORDS = CatalogRecord[realstdlibrecords(SHARED);
+                                     [stdlibstub(id) for id in stdlibids() if id.name ∉ REAL_STDLIBS]]
 const FIXTURE_A_NAMES = PkgNames(FIXTURE_A, here(v"0.1.0"), Set([:FixtureA, :fa, Symbol("@fam"), :FA_CONST]),
                                  Set([:fa_public]), Set{Symbol}())
 # FixtureB re-exports `fa`; FixtureC owns a `fa` of its own.
@@ -64,9 +64,9 @@ const STRANGER_NAMES = PkgNames(Base.PkgId(Base.UUID("5555aaaa-1111-4111-8111-00
 const FIXTURE_UUIDS = Dict(id.name => id.uuid for id in (FIXTURE_A, FIXTURE_B, FIXTURE_C))
 
 "A fresh catalog holding the stdlib records and `extra`."
-function seeded_catalog(extra::CatalogRecord...)
+function seededcatalog(extra::CatalogRecord...)
     path = joinpath(mktempdir(), "catalog")
-    write_catalog_changes!(path, CatalogRecord[STDLIB_RECORDS; extra...])
+    writecatalog!(path, CatalogRecord[STDLIB_RECORDS; extra...])
     path
 end
 
@@ -74,12 +74,12 @@ end
 A project depending on the fixtures named in `deps` (path dependencies, with a
 manifest covering every fixture), with `prefs` as its `[preferences.Autoloads]`.
 """
-function fixture_project(deps; prefs = "")
+function fixtureproject(deps; prefs = "")
     dir = mktempdir()
-    dep_lines = join(("$name = \"$(FIXTURE_UUIDS[name])\"\n" for name in deps))
+    deplines = join(("$name = \"$(FIXTURE_UUIDS[name])\"\n" for name in deps))
     write(joinpath(dir, "Project.toml"), """
           [deps]
-          $dep_lines
+          $deplines
           [extras]
           Autoloads = "$AUTOLOADS_UUID"
 
@@ -98,23 +98,23 @@ function fixture_project(deps; prefs = "")
 end
 
 "Start the `session_cases.jl` subprocess for `group`; returns it and its output buffer."
-function start_cases(group, ws, member, catalog, extra...; project = nothing)
+function startcases(group, ws, member, catalog, extra...; project = nothing)
     output = IOBuffer()
-    process = withenv("JULIA_DEPOT_PATH" => ws.depot_path, "JULIA_LOAD_PATH" => nothing,
+    process = withenv("JULIA_DEPOT_PATH" => ws.depotpath, "JULIA_LOAD_PATH" => nothing,
                       "JULIA_PROJECT" => nothing) do
-        run_julia(`$CASES $group $TEST_PROJECT $member $catalog $extra`; project, output)
+        runjulia(`$CASES $group $TEST_PROJECT $member $catalog $extra`; project, output)
     end
     (; group, process, output)
 end
 
-function check_cases((; group, process, output))
+function checkcases((; group, process, output))
     wait(process)
     success(process) || println("session case group $group failed:\n", String(take!(output)))
     @test success(process)
 end
 
 "Whether loading Autoloads into a fresh non-interactive process loads nothing else."
-function loads_only_autoloads()
+function loadsonlyautoloads()
     script = """
         before = collect(keys(Base.loaded_modules))
         push!(LOAD_PATH, ARGS[1])
@@ -122,50 +122,50 @@ function loads_only_autoloads()
         print(collect(setdiff(keys(Base.loaded_modules), before)) == [Base.PkgId(Autoloads)])
         """
     output = IOBuffer()
-    process = withenv("JULIA_DEPOT_PATH" => SHARED.depot_path, "JULIA_LOAD_PATH" => nothing,
+    process = withenv("JULIA_DEPOT_PATH" => SHARED.depotpath, "JULIA_LOAD_PATH" => nothing,
                       "JULIA_PROJECT" => nothing) do
-        run_julia(`-e $script $TEST_PROJECT`; project = nothing, output)
+        runjulia(`-e $script $TEST_PROJECT`; project = nothing, output)
     end
     wait(process)
     String(take!(output)) == "true"
 end
 
 @testset "session" begin
-    with_a = seeded_catalog(FIXTURE_A_NAMES)
-    project_catalog = seeded_catalog(FIXTURE_A_NAMES)
-    projects = (; selecting = fixture_project(["FixtureA", "FixtureB"]; prefs = "project = [\"FixtureA\"]"),
-                unselected = fixture_project(["FixtureA"]; prefs = "project = false"),
-                without = fixture_project(String[]; prefs = "project = [\"FixtureA\"]"))
-    stdlib_project = fixture_project(String[]; prefs = """
+    witha = seededcatalog(FIXTURE_A_NAMES)
+    projectcatalog = seededcatalog(FIXTURE_A_NAMES)
+    projects = (; selecting = fixtureproject(["FixtureA", "FixtureB"]; prefs = "project = [\"FixtureA\"]"),
+                unselected = fixtureproject(["FixtureA"]; prefs = "project = false"),
+                without = fixtureproject(String[]; prefs = "project = [\"FixtureA\"]"))
+    stdlibproject = fixtureproject(String[]; prefs = """
         stdlib = true
         packages.Distributed.skip = ["@spawn"]
         """)
-    broken_project = fixture_project(String[]; prefs = "stdlib = \"yes\"")
-    no_member = joinpath(mktempdir(), "autoloads")
-    hint_catalog = seeded_catalog(FIXTURE_A_NAMES, FIXTURE_B_NAMES, FIXTURE_C_NAMES)
-    bare_project = fixture_project(String[])
-    rm(joinpath(bare_project, "Manifest.toml"))
-    only_b = fixture_project(["FixtureB"]; prefs = "project = [\"FixtureB\"]")
-    runs = [start_cases("member", CHANGING, CHANGING.member, seeded_catalog()),
-            start_cases("sequencing", SHARED, SHARED.member, with_a),
-            start_cases("macro", SHARED, SHARED.member, seeded_catalog(FIXTURE_A_NAMES)),
-            start_cases("stdlib", SHARED, SHARED.member, seeded_catalog(FIXTURE_A_NAMES), broken_project;
-                        project = stdlib_project),
-            start_cases("project", SHARED, no_member, project_catalog, projects.unselected, projects.without,
+    brokenproject = fixtureproject(String[]; prefs = "stdlib = \"yes\"")
+    nomember = joinpath(mktempdir(), "autoloads")
+    hintcatalog = seededcatalog(FIXTURE_A_NAMES, FIXTURE_B_NAMES, FIXTURE_C_NAMES)
+    bareproject = fixtureproject(String[])
+    rm(joinpath(bareproject, "Manifest.toml"))
+    onlyb = fixtureproject(["FixtureB"]; prefs = "project = [\"FixtureB\"]")
+    runs = [startcases("member", CHANGING, CHANGING.member, seededcatalog()),
+            startcases("sequencing", SHARED, SHARED.member, witha),
+            startcases("macro", SHARED, SHARED.member, seededcatalog(FIXTURE_A_NAMES)),
+            startcases("stdlib", SHARED, SHARED.member, seededcatalog(FIXTURE_A_NAMES), brokenproject;
+                        project = stdlibproject),
+            startcases("project", SHARED, nomember, projectcatalog, projects.unselected, projects.without,
                         projects.selecting; project = projects.selecting)]
-    push!(runs, start_cases("hints", SHARED, SHARED.member, hint_catalog, bare_project; project = only_b),
-          start_cases("hints-bare", SHARED, no_member, seeded_catalog(FIXTURE_B_NAMES, STRANGER_NAMES);
-                      project = only_b))
-    unwritable = seeded_catalog(FIXTURE_A_NAMES)
+    push!(runs, startcases("hints", SHARED, SHARED.member, hintcatalog, bareproject; project = onlyb),
+          startcases("hints-bare", SHARED, nomember, seededcatalog(FIXTURE_B_NAMES, STRANGER_NAMES);
+                      project = onlyb))
+    unwritable = seededcatalog(FIXTURE_A_NAMES)
     chmod(dirname(unwritable), 0o555)
-    push!(runs, start_cases("unwritable", SHARED, SHARED.member, unwritable))
+    push!(runs, startcases("unwritable", SHARED, SHARED.member, unwritable))
     @testset "using Autoloads loads nothing else" begin
-        @test loads_only_autoloads()
+        @test loadsonlyautoloads()
     end
-    foreach(check_cases, runs)
+    foreach(checkcases, runs)
     chmod(dirname(unwritable), 0o755)
     @testset "an unchanged observation writes nothing" begin
-        check_cases(start_cases("observe-again", SHARED, no_member, project_catalog; project = projects.selecting))
+        checkcases(startcases("observe-again", SHARED, nomember, projectcatalog; project = projects.selecting))
     end
 end
 
@@ -176,7 +176,7 @@ end
     write(catalog, content)
     worker = Ext.Worker(Ext.Runtime(Channel{Ext.Event}(Inf), SHARED.member, catalog), Ext.Indexer())
     logger = Test.TestLogger(; respect_maxlog = true)
-    sessions = Base.CoreLogging.with_logger(() -> [Ext.derive_session(worker) for _ in 1:2], logger)
+    sessions = Base.CoreLogging.with_logger(() -> [Ext.derivesession(worker) for _ in 1:2], logger)
     @test sessions == [(nothing, nothing), (nothing, nothing)]
     @test count(log -> log.level == Base.CoreLogging.Warn && log.message == "Autoloads is off", logger.logs) == 1
     @test !Ext.observe!(worker, [Base.PkgId(Autoloads)])

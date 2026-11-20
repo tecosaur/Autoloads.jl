@@ -11,7 +11,7 @@ const SCRIPT = """
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
     Ext.RUNTIME[] = Ext.Runtime(Channel{Ext.Event}(Inf), "", "")
     println(stderr, "START")
-    foreach(_ -> Ext.repl_transform(REPL.softscope(Base.parse_input_line("x = 1; y = x + 1"))), 1:2)
+    foreach(_ -> Ext.repltransform(REPL.softscope(Base.parse_input_line("x = 1; y = x + 1"))), 1:2)
     println(stderr, "END")
     """
 
@@ -19,7 +19,7 @@ const SCRIPT = """
 # REPL, sharing a name with it.
 const SESSION_SETUP = """
     using Autoloads, REPL, Future
-    using Autoloads: PkgNames, CatalogRecord, build_catalog, build_registry, parse_config
+    using Autoloads: PkgNames, CatalogRecord, buildcatalog, buildregistry, parseconfig
     const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
     origin = Base.PkgId(Base.UUID(UInt128(2)), "Origin")
     at = Autoloads.Sighting[(; version = nothing, julia = Autoloads.JULIA_MINOR)]
@@ -30,22 +30,22 @@ const SESSION_SETUP = """
                             names(Base.PkgId(nothing, "Base.Threads"), :Threads, :nthreads),
                             names(Base.PkgId(nothing, "Base.Iterators"), :Iterators, :flatten),
                             names(Base.PkgId(nothing, "Base.Meta"), :Meta, :quot)]
-    catalog, cfg = build_catalog(records), parse_config(Dict{String, Any}())
+    catalog, cfg = buildcatalog(records), parseconfig(Dict{String, Any}())
     autoload = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(record.id => nothing for record in records)
-    const SESSION = Ext.Session(catalog, build_registry(catalog, autoload, cfg), cfg, mktempdir(), Set{String}())
+    const SESSION = Ext.Session(catalog, buildregistry(catalog, autoload, cfg), cfg, mktempdir(), Set{String}())
     @atomic Ext.SESSION.session = SESSION
     """
 
 const SESSION_SCRIPT = SESSION_SETUP * """
     Ext.RUNTIME[] = Ext.Runtime(Channel{Ext.Event}(Inf), "", "")
-    @atomic Ext.RUNTIME[].has_refreshed = true
+    @atomic Ext.RUNTIME[].hasrefreshed = true
     inputs = [REPL.softscope(Base.parse_input_line("nthreads")), REPL.softscope(REPL.helpmode(devnull, "flatten", Main)),
               REPL.softscope(Base.parse_input_line("x = quot(1)")), REPL.softscope(Base.parse_input_line("LineEditREPL"))]
     completions = [(REPL.LineEdit.NamedCompletion[], region, true) => text
                    for (text, region) in ("nthr" => (0 => 4), "Stranger.str" => (9 => 12))]
     println(stderr, "START")
-    completed = [Ext.with_autoloadable(result, SESSION, text) for (result, text) in completions]
-    foreach(input -> Core.eval(Main, Ext.repl_transform(input)), inputs)
+    completed = [Ext.withautoloadable(result, SESSION, text) for (result, text) in completions]
+    foreach(input -> Core.eval(Main, Ext.repltransform(input)), inputs)
     println(stderr, "END")
     print(stderr, "RAN: ", all(name -> isdefined(Main, name), (:nthreads, :flatten, :quot, :LineEditREPL)) &&
                            all(c -> length(first(c)) == 1, completed))
@@ -56,14 +56,14 @@ const HINT_SCRIPT = SESSION_SETUP * """
     io = IOContext(IOContext(devnull, :color => true), :limit => true)
     errors = [UndefVarError(name, Main) for name in (:stranger_fn, :no_such_name)]
     println(stderr, "START")
-    foreach(err -> Ext.undefvar_hint(io, err), errors)
+    foreach(err -> Ext.undefvarhint(io, err), errors)
     println(stderr, "END")
-    hint = sprint(Ext.undefvar_hint, first(errors))
+    hint = sprint(Ext.undefvarhint, first(errors))
     print(stderr, "HINTED: ", occursin("pkg> add Stranger", hint))
     """
 
 "The `--trace-compile` output of `script` between its `START` and `END` lines, and what follows them."
-function traced_compilation(script)
+function tracedcompilation(script)
     julia = joinpath(Sys.BINDIR, Base.julia_exename())
     # Not `Base.julia_cmd()`: `Pkg.test`'s flags (`--check-bounds=yes`) select other caches.
     cmd = `$julia --startup-file=no --project=$(Base.active_project()) --trace-compile=stderr -e $script`
@@ -76,7 +76,7 @@ function traced_compilation(script)
 end
 
 "A pseudo-terminal, as Julia's REPL tests open one: its subordinate end, for a process's stdio, and its controller."
-function open_pty()
+function openpty()
     flags = Base.Filesystem.JL_O_RDWR | Base.Filesystem.JL_O_NOCTTY
     controller = ccall(:posix_openpt, Cint, (Cint,), flags)
     controller == -1 && error("Opening a pseudo-terminal failed: posix_openpt returned -1")
@@ -90,8 +90,8 @@ end
 Run `cmd`, an interactive REPL, on a pseudo-terminal (piped input gets no REPL), type `input` at its first prompt, and
 return the first capture of `pattern` in what it prints, or `nothing` after 120 s.
 """
-function repl_capture(cmd, input, pattern::Regex)
-    subordinate, terminal = open_pty()
+function replcapture(cmd, input, pattern::Regex)
+    subordinate, terminal = openpty()
     process = run(cmd, subordinate, subordinate, subordinate; wait = false)
     Base.close_stdio(subordinate)
     output = Ref("")
@@ -119,24 +119,24 @@ Sys.iswindows() || @testset "a REPL started with only Autoloads loaded integrate
     julia = joinpath(Sys.BINDIR, Base.julia_exename())
     cmd = addenv(`$julia --startup-file=no --history-file=no --project=$(Base.active_project()) -i -e "using Autoloads"`,
                  "JULIA_DEPOT_PATH" => join([depot; DEPOT_PATH], ':'), "XDG_STATE_HOME" => mktempdir(), "TERM" => "xterm")
-    is_integrated = "Base.get_extension(Autoloads, :AutoloadsREPLExt) !== nothing"
+    isintegrated = "Base.get_extension(Autoloads, :AutoloadsREPLExt) !== nothing"
     # Split, so the echoed input cannot match.
-    input = "timedwait(() -> $is_integrated, 60); print(\"INTEG\", \"RATED=\", $is_integrated)"
-    @test repl_capture(cmd, input, r"INTEGRATED=(true|false)") == "true"
+    input = "timedwait(() -> $isintegrated, 60); print(\"INTEG\", \"RATED=\", $isintegrated)"
+    @test replcapture(cmd, input, r"INTEGRATED=(true|false)") == "true"
 end
 
 @testset "inputs compile nothing of Autoloads'" begin
-    @test !occursin("Autoloads", first(traced_compilation(SCRIPT)))
+    @test !occursin("Autoloads", first(tracedcompilation(SCRIPT)))
 end
 
 @testset "autoloading inputs, help queries and completions compile nothing of Autoloads'" begin
-    traced, rest = traced_compilation(SESSION_SCRIPT)
+    traced, rest = tracedcompilation(SESSION_SCRIPT)
     @test !occursin("Autoloads", traced)
     @test endswith(rest, "RAN: true")
 end
 
 @testset "the first UndefVarError hint compiles nothing of Autoloads'" begin
-    traced, rest = traced_compilation(HINT_SCRIPT)
+    traced, rest = tracedcompilation(HINT_SCRIPT)
     @test !occursin("Autoloads", traced)
     @test endswith(rest, "HINTED: true")
 end

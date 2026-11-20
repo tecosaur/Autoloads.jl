@@ -13,77 +13,72 @@ const MEMBER = "autoloads"
 
 include("projectfiles.jl")
 
-function main(global_dir, carry_over_dir)
-    mkpath(global_dir)
-    project_file = joinpath(global_dir, "Project.toml")
-    member_file = joinpath(global_dir, MEMBER, "Project.toml")
+function main(globaldir, carrydir)
+    mkpath(globaldir)
+    projectfile = joinpath(globaldir, "Project.toml")
+    memberfile = joinpath(globaldir, MEMBER, "Project.toml")
     originals = [file => if isfile(file) read(file) end
-                 for file in (project_file, joinpath(global_dir, "LocalPreferences.toml"))]
-    had_member_dir, had_member_file = isdir(dirname(member_file)), isfile(member_file)
+                 for file in (projectfile, joinpath(globaldir, "LocalPreferences.toml"))]
+    haddir, hadfile = isdir(dirname(memberfile)), isfile(memberfile)
     try
-        list_member(project_file)
-        create_member(member_file, carry_over_dir)
-        isempty(carry_over_dir) || carry_preferences(global_dir, dirname(carry_over_dir))
+        listmember(projectfile)
+        createmember(memberfile, carrydir)
+        isempty(carrydir) || carrypreferences(globaldir, dirname(carrydir))
         Pkg.resolve()
     catch
         for (file, original) in originals
             if original === nothing
                 rm(file; force = true)
             else
-                write_atomically(file, original)
+                writeatomically(file, original)
             end
         end
-        had_member_dir || rm(dirname(member_file); recursive = true, force = true)
-        had_member_dir && !had_member_file && rm(member_file; force = true)
-        println(stderr, "Restored $project_file and removed the new $MEMBER member after the failure below")
+        haddir || rm(dirname(memberfile); recursive = true, force = true)
+        haddir && !hadfile && rm(memberfile; force = true)
+        println(stderr, "Restored $projectfile and removed the new $MEMBER member after the failure below")
         rethrow()
     end
 end
 
-# ── Helpers ──
+# Steps
 
-function list_member(project_file)
-    project = if isfile(project_file) TOML.parsefile(project_file) else Dict{String, Any}() end
+function listmember(projectfile)
+    project = if isfile(projectfile) TOML.parsefile(projectfile) else Dict{String, Any}() end
     projects = get!(get!(project, "workspace", Dict{String, Any}()), "projects", String[])
     if MEMBER in projects
-        println("$project_file already lists the $MEMBER workspace member")
+        println("$projectfile already lists the $MEMBER workspace member")
     else
         push!(projects, MEMBER)
-        write_toml(project_file, project)
-        println("Added the $MEMBER workspace member to $project_file")
+        writetoml(projectfile, project)
+        println("Added the $MEMBER workspace member to $projectfile")
     end
 end
 
-function create_member(member_file, carry_over_dir)
-    isfile(member_file) && return println("$member_file already exists")
-    mkpath(dirname(member_file))
-    if isempty(carry_over_dir)
-        write_toml(member_file, Dict{String, Any}())
-        println("Created $member_file")
+function createmember(memberfile, carrydir)
+    isfile(memberfile) && return println("$memberfile already exists")
+    mkpath(dirname(memberfile))
+    if isempty(carrydir)
+        writetoml(memberfile, Dict{String, Any}())
+        println("Created $memberfile")
     else
-        carried = carried_deps(joinpath(carry_over_dir, "Project.toml"))
-        write_toml(member_file, carried)
-        println("Created $member_file, carrying over $(length(get(carried, "deps", ()))) packages from $carry_over_dir")
+        carried = carrieddeps(joinpath(carrydir, "Project.toml"))
+        writetoml(memberfile, carried)
+        println("Created $memberfile, carrying over $(length(get(carried, "deps", ()))) packages from $carrydir")
     end
 end
 
-"""
-Copy the Autoloads preferences of the global environment in `previous_dir`,
-from its Project.toml and LocalPreferences.toml, into each of
-`global_dir`'s that has none.
-"""
-function carry_preferences(global_dir, previous_dir)
+function carrypreferences(globaldir, previousdir)
     for (file, keypath) in (("Project.toml", ["preferences", "Autoloads"]), ("LocalPreferences.toml", ["Autoloads"]))
-        source = joinpath(previous_dir, file)
+        source = joinpath(previousdir, file)
         isfile(source) || continue
         table = foldl((dict, key) -> get(dict, key, Dict{String, Any}()), keypath; init = TOML.parsefile(source))
         isempty(table) && continue
-        target = joinpath(global_dir, file)
+        target = joinpath(globaldir, file)
         content = if isfile(target) TOML.parsefile(target) else Dict{String, Any}() end
         parent = foldl((dict, key) -> get!(dict, key, Dict{String, Any}()), keypath[1:end-1]; init = content)
         haskey(parent, last(keypath)) && continue
         parent[last(keypath)] = table
-        write_toml(target, content)
+        writetoml(target, content)
         println("Carried over the Autoloads preferences in $source")
     end
 end

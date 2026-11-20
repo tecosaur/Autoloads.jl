@@ -7,11 +7,10 @@
 const KEY_ORDER = ["name", "uuid", "keywords", "license", "desc", "version", "readonly", "workspace",
                    "deps", "weakdeps", "sources", "extensions", "compat"]
 
-key_rank(key) = (something(findfirst(==(key), KEY_ORDER), length(KEY_ORDER) + 1), key)
+writetoml(path, dict) = writeatomically(path, sprint(io -> TOML.print(io, dict; sorted = true,
+                                                                   by = key -> (something(findfirst(==(key), KEY_ORDER), length(KEY_ORDER) + 1), key))))
 
-write_toml(path, dict) = write_atomically(path, sprint(io -> TOML.print(io, dict; sorted = true, by = key_rank)))
-
-function write_atomically(path, content)
+function writeatomically(path, content)
     tmp = path * ".tmp-$(getpid())"
     try
         write(tmp, content)
@@ -22,9 +21,9 @@ function write_atomically(path, content)
     end
 end
 
-"The `[sources]` entry for each developed or git-sourced package of `project_file`'s manifest, by UUID."
-function manifest_sources(project_file)
-    manifest = Base.project_file_manifest_path(project_file)
+"The `[sources]` entry for each developed or git-sourced package of `projectfile`'s manifest, by UUID."
+function manifestsources(projectfile)
+    manifest = Base.project_file_manifest_path(projectfile)
     sources = Dict{String, Dict{String, Any}}()
     manifest === nothing && return sources
     for infos in values(get(TOML.parsefile(manifest), "deps", Dict{String, Any}())), info in infos
@@ -39,18 +38,20 @@ function manifest_sources(project_file)
 end
 
 """
-The `[deps]` of `project_file`, with their `[compat]` and Julia's, and the
+    carrieddeps(projectfile) -> Dict{String, Any}
+
+The `[deps]` of `projectfile`, with their `[compat]` and Julia's, and the
 `[sources]` of those developed or from a git repository: the project's own
 entry, else one made from its manifest (Pkg before 1.13 records sources there
 only). Paths are made absolute, for use in another project.
 """
-function carried_deps(project_file)
-    project = TOML.parsefile(project_file)
+function carrieddeps(projectfile)
+    project = TOML.parsefile(projectfile)
     deps = get(project, "deps", Dict{String, Any}())
     declared = get(project, "sources", Dict{String, Any}())
-    recorded = manifest_sources(project_file)
+    recorded = manifestsources(projectfile)
     absolute(source) = if haskey(source, "path")
-        merge(source, Dict("path" => normpath(joinpath(dirname(project_file), source["path"]))))
+        merge(source, Dict("path" => normpath(joinpath(dirname(projectfile), source["path"]))))
     else
         source
     end

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Run by `Autoloads.add` and `remove` with `all_versions` as
+# Run by `Autoloads.add` and `remove` with `allversions` as
 #
 #     julia spread.jl <add|remove> <source member> <names, comma-separated> <member>...
 #
@@ -15,27 +15,27 @@ include("projectfiles.jl")
 const SECTIONS = ("deps", "sources", "compat")
 
 function main(op, source_dir, names, targets)
-    source = if op == "add" carried_deps(joinpath(source_dir, "Project.toml")) else Dict{String, Any}() end
+    source = if op == "add" carrieddeps(joinpath(source_dir, "Project.toml")) else Dict{String, Any}() end
     done, to = if op == "add"; ("Added ", " to ") else ("Removed ", " from ") end
     for member in targets
-        project_file = joinpath(member, "Project.toml")
-        project = TOML.parsefile(project_file)
-        is_changed = false
+        projectfile = joinpath(member, "Project.toml")
+        project = TOML.parsefile(projectfile)
+        ischanged = false
         for section in SECTIONS, name in names
             table = get!(project, section, Dict{String, Any}())
             entry = get(get(source, section, Dict{String, Any}()), name, nothing)
             get(table, name, nothing) == entry && continue
-            is_changed = true
+            ischanged = true
             if entry === nothing
                 delete!(table, name)
             else
                 table[name] = entry
             end
         end
-        is_changed || continue
+        ischanged || continue
         filter!(((key, value),) -> !(key in SECTIONS && isempty(value)), project)
-        write_toml(project_file, project)
-        println(done, join(names, ", "), to, project_file)
+        writetoml(projectfile, project)
+        println(done, join(names, ", "), to, projectfile)
     end
 end
 

@@ -3,50 +3,48 @@
 
 using Test
 using Autoloads: Sighting, JULIA_MINOR, Config, PackageConfig, ConfigError, PrecompilePolicy, Bindings,
-    Background, Lazy, AllBindings, UsedBindings, parse_config, package_config,
-    bindings_for, autoload_names, PkgNames
+    Background, Lazy, AllBindings, UsedBindings, parseconfig, packageconfig,
+    autoloadnames, PkgNames
 
-error_text(f) = try; f(); "no error"; catch e; sprint(showerror, e); end
+errortext(f) = try; f(); "no error"; catch e; sprint(showerror, e); end
 
 @testset "config defaults" begin
-    cfg = parse_config(Dict{String, Any}())
+    cfg = parseconfig(Dict{String, Any}())
     @test cfg.stdlib === true
     @test cfg.project === nothing
     @test cfg.policy == Background
     @test cfg.bindings == AllBindings
     @test cfg.log === false
-    @test cfg.up_hook === true
+    @test cfg.uphook === true
     @test isempty(cfg.packages)
 end
 
 @testset "config keys" begin
-    @test parse_config(Dict("stdlib" => true)).stdlib
-    @test parse_config(Dict("project" => true)).project === nothing
-    @test parse_config(Dict("project" => false)).project == Set{String}()
-    @test parse_config(Dict("project" => Any["CSV", "Foo"])).project == Set(["CSV", "Foo"])
-    @test parse_config(Dict("project" => ["CSV"])).project == Set(["CSV"])
-    @test parse_config(Dict("precompile" => "lazy")).policy == Lazy
-    @test parse_config(Dict("precompile" => "background")).policy == Background
-    @test parse_config(Dict("bindings" => "used")).bindings == UsedBindings
-    @test parse_config(Dict("log" => true)).log === true
-    @test parse_config(Dict("up_hook" => false)).up_hook === false
-    cfg = parse_config(Dict("bindings" => "used", "packages" => Dict(
+    @test parseconfig(Dict("stdlib" => true)).stdlib
+    @test parseconfig(Dict("project" => true)).project === nothing
+    @test parseconfig(Dict("project" => false)).project == Set{String}()
+    @test parseconfig(Dict("project" => Any["CSV", "Foo"])).project == Set(["CSV", "Foo"])
+    @test parseconfig(Dict("project" => ["CSV"])).project == Set(["CSV"])
+    @test parseconfig(Dict("precompile" => "lazy")).policy == Lazy
+    @test parseconfig(Dict("precompile" => "background")).policy == Background
+    @test parseconfig(Dict("bindings" => "used")).bindings == UsedBindings
+    @test parseconfig(Dict("log" => true)).log === true
+    @test parseconfig(Dict("up_hook" => false)).uphook === false
+    cfg = parseconfig(Dict("bindings" => "used", "packages" => Dict(
         "DataFrames" => Dict("skip" => ["@btime", "x"], "only" => ["a"], "bindings" => "all"),
         "Plots" => Dict{String, Any}())))
-    df = package_config(cfg, "DataFrames")
+    df = packageconfig(cfg, "DataFrames")
     @test df.skip == Set([Symbol("@btime"), :x])
     @test df.only == Set([:a])
     @test df.bindings == AllBindings
-    @test bindings_for(cfg, "DataFrames") == AllBindings
-    @test bindings_for(cfg, "Plots") == UsedBindings
-    @test bindings_for(cfg, "Unlisted") == UsedBindings
-    plain = package_config(cfg, "Unlisted")
+    @test cfg.bindings == UsedBindings && packageconfig(cfg, "Plots").bindings === nothing
+    plain = packageconfig(cfg, "Unlisted")
     @test isempty(plain.skip) && plain.only === nothing && plain.bindings === nothing
 end
 
 @testset "config errors" begin
-    bad(prefs) = error_text(() -> parse_config(prefs))
-    @test_throws ConfigError parse_config(Dict("project" => "CSV"))
+    bad(prefs) = errortext(() -> parseconfig(prefs))
+    @test_throws ConfigError parseconfig(Dict("project" => "CSV"))
     @test occursin("`project`", bad(Dict("project" => "CSV")))
     @test occursin("found 3 (Int64)", bad(Dict("project" => 3)))
     @test occursin("`stdlib`", bad(Dict("stdlib" => "yes")))
@@ -69,7 +67,7 @@ end
     id = Base.PkgId(Base.UUID("11111111-2222-3333-4444-555555555555"), "Pkg.Sub")
     at = Sighting[(; version = nothing, julia = JULIA_MINOR)]
     r = PkgNames(id, at, Set([:Sub, :a, :b, Symbol("@btime")]), Set([:p]), Set([:r]))
-    names(c) = autoload_names(r, c)
+    names(c) = autoloadnames(r, c)
     @test names(PackageConfig(Set{Symbol}(), nothing, nothing)) == Set([:Sub, :a, :b, :r, Symbol("@btime")])
     @test names(PackageConfig(Set([:a, Symbol("@btime")]), nothing, nothing)) == Set([:Sub, :b, :r])
     @test names(PackageConfig(Set{Symbol}(), Set([:a]), nothing)) == Set([:Sub, :a])

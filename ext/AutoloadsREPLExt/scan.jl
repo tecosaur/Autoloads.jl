@@ -11,42 +11,34 @@ const BINDING_CALLS = (:declare_global, :declare_const, :setglobal!, :define_met
 const HELP_MACRO = QuoteNode(Symbol("@repl"))
 
 """
-    map_statements(f, ex) -> Any
+    mapstatements(f, ex) -> Any
 
 Rebuild `ex` with each statement, what the REPL evaluates as one, replaced by
 `f(statement)`.
 """
-function map_statements(f, @nospecialize(ex))
+function mapstatements(f, @nospecialize(ex))
     ex isa LineNumberNode && return ex
     Meta.isexpr(ex, :toplevel) || return f(ex)
-    Expr(:toplevel, Any[map_statements(f, arg) for arg in ex.args]...)
+    Expr(:toplevel, Any[mapstatements(f, arg) for arg in ex.args]...)
 end
 
-"""
-    is_candidate_statement(reg, stmt, member_only) -> Bool
-
-Whether `stmt` mentions, outside quotes, a candidate name of `reg` or an import
-of a `member_only` module.
-"""
-function is_candidate_statement(reg::Registry, stmt, member_only::Function)
-    any_unquoted(stmt) do node
-        if node isa Symbol is_candidate(reg, node) else is_member_only_import(node, member_only) end
+function iscandidatestatement(reg::Registry, stmt, memberonly::Function)
+    anyunquoted(stmt) do node
+        if node isa Symbol iscandidate(reg, node) else ismemberonlyimport(node, memberonly) end
     end
 end
 
-has_member_only_using(stmt, member_only::Function) = any_unquoted(node -> is_member_only_import(node, member_only), stmt)
-
 """
-    statement_macros(stmt) -> Vector{Symbol}
+    statementmacros(stmt) -> Vector{Symbol}
 
 The macros `stmt` invokes outside quotes, each as `Symbol("@m")`, or for
 `A.B.@m` its root `A`.
 """
-function statement_macros(stmt)
+function statementmacros(stmt)
     macros = Symbol[]
-    any_unquoted(stmt) do node
+    anyunquoted(stmt) do node
         if Meta.isexpr(node, :macrocall)
-            root = dotted_root(node.args[1])
+            root = dottedroot(node.args[1])
             root === nothing || push!(macros, root)
         end
         false
@@ -55,12 +47,12 @@ function statement_macros(stmt)
 end
 
 """
-    undefined_globals(stmt, mod) -> Vector{Symbol}
+    undefinedglobals(stmt, mod::Module) -> Vector{Symbol}
 
 The undefined globals of `mod` that `stmt` reads once lowered, other than those
 it binds. Empty if lowering fails.
 """
-function undefined_globals(stmt, mod::Module)
+function undefinedglobals(stmt, mod::Module)
     lowered = try
         Meta.lower(mod, stmt)
     catch err
@@ -69,78 +61,72 @@ function undefined_globals(stmt, mod::Module)
     end
     referenced, bound = Symbol[], Set{Symbol}()
     # A bare name lowers to itself.
-    if lowered isa Symbol push!(referenced, lowered) else collect_globals!(referenced, bound, lowered, mod) end
+    if lowered isa Symbol push!(referenced, lowered) else collectglobals!(referenced, bound, lowered, mod) end
     filter(name -> name ∉ bound && !startswith(String(name), '#') && !isdefined(mod, name), unique!(referenced))
 end
 
 """
-    help_query_names(stmt) -> Union{Vector{Symbol}, Nothing}
+    helpquerynames(stmt) -> Union{Vector{Symbol}, Nothing}
 
 The names help-mode input `stmt` asks about (`help?> A.f(x)` gives `[:A, :x]`),
 or `nothing` if `stmt` is not help input.
 """
-function help_query_names(stmt)
+function helpquerynames(stmt)
     names = Symbol[]
-    is_help = any_unquoted(stmt) do node
+    ishelp = anyunquoted(stmt) do node
         Meta.isexpr(node, :macrocall) && length(node.args) >= 4 || return false
         callee = node.args[1]
         # Not `==`: comparing expressions compiles on first use.
         Meta.isexpr(callee, :., 2) && callee.args[1] === REPL && callee.args[2] === HELP_MACRO || return false
-        any_unquoted(name -> (name isa Symbol && push!(names, name); false), node.args[4])
+        anyunquoted(name -> (name isa Symbol && push!(names, name); false), node.args[4])
         true
     end
-    if is_help unique!(names) end
+    if ishelp unique!(names) end
 end
 
-# ── Helpers ──
+# Expression walking
 
-"""
-    any_unquoted(pred, ex, quote_depth = 0)
-
-Whether `pred` holds for any node of `ex` outside quotes; stops at the first.
-"""
-function any_unquoted(pred, ex, quote_depth::Int = 0)
-    quote_depth == 0 && pred(ex) && return true
+function anyunquoted(pred, ex, quotedepth::Int = 0)
+    quotedepth == 0 && pred(ex) && return true
     ex isa Expr || return false
-    inner = if ex.head === :quote quote_depth + 1 elseif ex.head === :$ max(quote_depth - 1, 0) else quote_depth end
-    any(arg -> any_unquoted(pred, arg, inner), ex.args)
+    inner = if ex.head === :quote quotedepth + 1 elseif ex.head === :$ max(quotedepth - 1, 0) else quotedepth end
+    any(arg -> anyunquoted(pred, arg, inner), ex.args)
 end
 
-is_member_only_import(node, member_only::Function) =
-    Meta.isexpr(node, (:using, :import)) && any(member_only, import_roots(node))
+ismemberonlyimport(node, memberonly::Function) =
+    Meta.isexpr(node, (:using, :import)) && any(memberonly, importroots(node))
 
-function import_roots(ex::Expr)
+function importroots(ex::Expr)
     roots = Symbol[]
     for path in ex.args
-        root = dotted_root(if Meta.isexpr(path, (:(:), :as)) path.args[1] else path end)
+        root = dottedroot(if Meta.isexpr(path, (:(:), :as)) path.args[1] else path end)
         root isa Symbol && root !== :. && push!(roots, root)
     end
     roots
 end
 
-function dotted_root(path)
+function dottedroot(path)
     path isa Symbol && return path
-    if Meta.isexpr(path, :.) dotted_root(path.args[1]) end
+    if Meta.isexpr(path, :.) dottedroot(path.args[1]) end
 end
 
-function collect_globals!(referenced::Vector{Symbol}, bound::Set{Symbol}, x, mod::Module)
+function collectglobals!(referenced::Vector{Symbol}, bound::Set{Symbol}, x, mod::Module)
+    function bindingtargets(ex::Expr)
+        ex.head === :global && return ex.args
+        ex.head in (:method, :globaldecl, :const, :(=)) && return ex.args[1:1]
+        callee = if Meta.isexpr(ex, :call) ex.args[1] end
+        isbindingcall = callee isa GlobalRef && callee.name in BINDING_CALLS && length(ex.args) >= 3 && ex.args[2] === mod
+        if isbindingcall ex.args[3:3] else () end
+    end
     if x isa GlobalRef
         x.mod === mod && push!(referenced, x.name)
     elseif x isa Core.CodeInfo
-        foreach(st -> collect_globals!(referenced, bound, st, mod), x.code)
+        foreach(st -> collectglobals!(referenced, bound, st, mod), x.code)
     elseif x isa Expr
-        for target in binding_targets(x, mod)
+        for target in bindingtargets(x)
             name = if target isa GlobalRef target.name elseif target isa QuoteNode target.value else target end
             name isa Symbol && push!(bound, name)
         end
-        foreach(arg -> collect_globals!(referenced, bound, arg, mod), x.args)
+        foreach(arg -> collectglobals!(referenced, bound, arg, mod), x.args)
     end
-end
-
-function binding_targets(ex::Expr, mod::Module)
-    ex.head === :global && return ex.args
-    ex.head in (:method, :globaldecl, :const, :(=)) && return ex.args[1:1]
-    callee = if Meta.isexpr(ex, :call) ex.args[1] end
-    is_binding_call = callee isa GlobalRef && callee.name in BINDING_CALLS && length(ex.args) >= 3 && ex.args[2] === mod
-    if is_binding_call ex.args[3:3] else () end
 end

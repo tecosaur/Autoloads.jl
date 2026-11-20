@@ -12,8 +12,8 @@ const NO_ENV = id -> nothing
 
 @testset "availability" begin
     deps, manifest, member = Set([A.uuid]), Set([A.uuid, B.uuid]), Set([A.uuid, C.uuid, E.uuid])
-    on_path = id -> id == C ? "@v1.13" : nothing
-    availability(id, deps = deps) = Hints.availability(id, deps, manifest, member, on_path)
+    onpath = id -> id == C ? "@v1.13" : nothing
+    availability(id, deps = deps) = Hints.availability(id, deps, manifest, member, onpath)
     @test availability(A) == (Hints.DirectDep, nothing)
     @test availability(B) == (Hints.InProjectManifest, nothing)
     @test availability(C) == (Hints.OnLoadPath, "@v1.13")
@@ -26,7 +26,7 @@ end
     avail = Dict(A => (Hints.InProjectManifest, nothing), B => (Hints.DirectDep, nothing),
                  C => (Hints.Elsewhere, nothing), D => (Hints.Elsewhere, nothing),
                  E => (Hints.AutoloadPackage, nothing))
-    ranked(ps) = [(p.id.name, p.owns) for p in Hints.rank_providers(ps, id -> avail[id])]
+    ranked(ps) = [(p.id.name, p.owns) for p in Hints.rankproviders(ps, id -> avail[id])]
     @test ranked([(A, true), (B, false)]) == [("B", false), ("A", true)]
     @test ranked([(D, false), (C, true)]) == [("C", true), ("D", false)]
     @test ranked([(D, true), (C, true)]) == [("C", true), ("D", true)]
@@ -39,9 +39,9 @@ end
     graph = Autoloads.ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(id.uuid => nothing for id in (A, B, C)),
                                     Dict(A.uuid => [B.uuid], B.uuid => Base.UUID[], C.uuid => Base.UUID[]))
     providers = [(A, false), (B, true), (C, true)]
-    @test Hints.reexport_sources(providers, graph) == Dict(A => ["B"])
-    @test Hints.reexport_sources([(D, false), (B, true), (C, true)], graph) == Dict(D => ["B", "C"])
-    @test Hints.reexport_sources([(B, false), (C, true)], graph) == Dict(B => ["C"])
+    @test Hints.reexportsources(providers, graph) == Dict(A => ["B"])
+    @test Hints.reexportsources([(D, false), (B, true), (C, true)], graph) == Dict(D => ["B", "C"])
+    @test Hints.reexportsources([(B, false), (C, true)], graph) == Dict(B => ["C"])
 end
 
 @testset "hint text" begin
@@ -50,7 +50,7 @@ end
               Hints.RankedProvider(C, true, Hints.OnLoadPath, "@v1.13"),
               Hints.RankedProvider(E, true, Hints.AutoloadPackage, nothing),
               Hints.RankedProvider(D, true, Hints.Elsewhere, nothing)]
-    text = Hints.format_hint(:fa, ranked, Dict(A => ["B", "C"]), true)
+    text = Hints.formathint(:fa, ranked, Dict(A => ["B", "C"]), true)
     @test String(text) == """
 
         Hint: fa is provided by packages that are not loaded:
@@ -60,8 +60,8 @@ end
           • using E  (an autoload package)
           • pkg> add D  (or pkg> autoloads add D)"""
     @test occursin("\e[36musing A\e[39m", sprint(print, text; context = :color => true))
-    without_member = Hints.format_hint(:fa, ranked[5:5], Dict{Base.PkgId, Vector{String}}(), false)
-    @test endswith(without_member, "• pkg> add D  (run pkg> autoloads init to autoload packages)")
+    withoutmember = Hints.formathint(:fa, ranked[5:5], Dict{Base.PkgId, Vector{String}}(), false)
+    @test endswith(withoutmember, "• pkg> add D  (run pkg> autoloads init to autoload packages)")
 end
 
 end

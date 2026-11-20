@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # Subprocess half of test_load.jl: runs one case group of `load!` and
-# `eval_with_member` against the shared workspace, exiting non-zero if any
+# `evalwithmember` against the shared workspace, exiting non-zero if any
 # test fails.
 #
 #     julia [--project=<env>] load_cases.jl <group> <Autoloads test project> <member>
@@ -22,15 +22,15 @@ const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
 const FIXTURE_MISSING = Base.PkgId(Base.UUID("d0d0d0d0-4444-4444-8444-00000000000d"), "FixtureMissing")
 
 "Run `load!`, returning its result and the `(level, message, exception text)` of each log."
-function logged_load!(state, req; kwargs...)
+function loggedload!(state, req; kwargs...)
     logs, loaded = Test.collect_test_logs(() -> Ext.load!(state, req, MEMBER; kwargs...))
     @test LOAD_PATH == DEFAULT_LOAD_PATH
-    exception_text(log) = haskey(log.kwargs, :exception) ? sprint(showerror, first(log.kwargs[:exception])) : ""
-    loaded, [(log.level, log.message, exception_text(log)) for log in logs]
+    exceptiontext(log) = haskey(log.kwargs, :exception) ? sprint(showerror, first(log.kwargs[:exception])) : ""
+    loaded, [(log.level, log.message, exceptiontext(log)) for log in logs]
 end
 
 "Whether the only logs are one info line and then one warning whose exception text satisfies `pred`."
-function warned_once(logs, pred)
+function warnedonce(logs, pred)
     length(logs) == 2 || return false
     (level, _, text) = last(logs)
     first(first(logs)) == Logging.Info && level == Logging.Warn && pred(text)
@@ -39,11 +39,11 @@ end
 if GROUP == "global"
     @testset "global environment" begin
         state = Ext.LoadState()
-        @test logged_load!(state, LoadRequest(FIXTURE_A, :fa, nothing)) ==
+        @test loggedload!(state, LoadRequest(FIXTURE_A, :fa, nothing)) ==
             (true, [(Logging.Info, "Autoloading FixtureA (for fa)", "")])
         @test isdefined(Main, :fa) && isdefined(Main, :FA_CONST)
         @test (FIXTURE_A, nothing) in state.attempted
-        @test logged_load!(state, LoadRequest(Base.PkgId(nothing, "Base.Threads"), :nthreads, nothing);
+        @test loggedload!(state, LoadRequest(Base.PkgId(nothing, "Base.Threads"), :nthreads, nothing);
                            announce = false) == (true, [])
         @test isdefined(Main, :nthreads)
         @testset "extension resolution" begin
@@ -55,27 +55,27 @@ if GROUP == "global"
         @testset "failure is remembered" begin
             ENV["FIXTUREB_FAIL"] = "1"
             b = LoadRequest(FIXTURE_B, :fb, nothing)
-            loaded, logs = logged_load!(state, b)
-            @test !loaded && warned_once(logs, text -> occursin("FIXTUREB_FAIL", text))
+            loaded, logs = loggedload!(state, b)
+            @test !loaded && warnedonce(logs, text -> occursin("FIXTUREB_FAIL", text))
             @test FIXTURE_B in state.failed
-            @test logged_load!(state, b) == (false, [])
+            @test loggedload!(state, b) == (false, [])
             @test (FIXTURE_B, nothing) in state.attempted
         end
         @testset "forgotten failures are retried" begin
             delete!(ENV, "FIXTUREB_FAIL")
-            Ext.forget_failures!(state)
+            Ext.forgetfailures!(state)
             @test isempty(state.failed) && (FIXTURE_B, nothing) ∉ state.attempted
-            @test first(logged_load!(state, LoadRequest(FIXTURE_B, :fb, nothing)))
+            @test first(loggedload!(state, LoadRequest(FIXTURE_B, :fb, nothing)))
         end
         @testset "not installed" begin
-            loaded, logs = logged_load!(state, LoadRequest(FIXTURE_MISSING, :fm, nothing))
-            @test !loaded && warned_once(logs, text -> endswith(text,
+            loaded, logs = loggedload!(state, LoadRequest(FIXTURE_MISSING, :fm, nothing))
+            @test !loaded && warnedonce(logs, text -> endswith(text,
                 "run `pkg> instantiate` with the global environment active to install it"))
         end
         @testset "a pre-existing member entry survives" begin
             push!(LOAD_PATH, MEMBER)
-            missing_again = LoadRequest(Base.PkgId(Base.UUID(0xe0), "FixtureMissingToo"), :fm2, nothing)
-            _, loaded = Test.collect_test_logs(() -> Ext.load!(state, missing_again, MEMBER))
+            missingagain = LoadRequest(Base.PkgId(Base.UUID(0xe0), "FixtureMissingToo"), :fm2, nothing)
+            _, loaded = Test.collect_test_logs(() -> Ext.load!(state, missingagain, MEMBER))
             @test !loaded && LOAD_PATH == [DEFAULT_LOAD_PATH; MEMBER]
             pop!(LOAD_PATH)
         end
@@ -83,13 +83,13 @@ if GROUP == "global"
 elseif GROUP == "used"
     @testset "used bindings" begin
         state = Ext.LoadState()
-        @test first(logged_load!(state, LoadRequest(FIXTURE_A, :fa, :fa)))
+        @test first(loggedload!(state, LoadRequest(FIXTURE_A, :fa, :fa)))
         @test isdefined(Main, :fa) && !isdefined(Main, :FA_CONST) && !isdefined(Main, :FixtureA)
         @test (FIXTURE_A, :fa) in state.attempted
-        @test first(logged_load!(state, LoadRequest(FIXTURE_A, :FixtureA, :FixtureA)))
+        @test first(loggedload!(state, LoadRequest(FIXTURE_A, :FixtureA, :FixtureA)))
         @test isdefined(Main, :FixtureA) && !isdefined(Main, :FA_CONST)
         @testset "eval_with_member" begin
-            Ext.eval_with_member(:(@time using FixtureA), MEMBER)
+            Ext.evalwithmember(:(@time using FixtureA), MEMBER)
             @test isdefined(Main, :FA_CONST)
             @test LOAD_PATH == DEFAULT_LOAD_PATH
         end
@@ -100,26 +100,26 @@ elseif GROUP == "used"
             @test LOAD_PATH == DEFAULT_LOAD_PATH
             @test FIXTURE_C ∉ state.failed && (FIXTURE_C, nothing) ∉ state.attempted
             delete!(ENV, "FIXTUREC_INTERRUPT")
-            @test first(logged_load!(state, c))
+            @test first(loggedload!(state, c))
         end
     end
 elseif GROUP == "project"
     @testset "active project provides FixtureA v0.2.0" begin
         state = Ext.LoadState()
-        @test first(logged_load!(state, LoadRequest(FIXTURE_A, :fa, nothing)))
+        @test first(loggedload!(state, LoadRequest(FIXTURE_A, :fa, nothing)))
         @test startswith(pathof(Main.FixtureA), dirname(Base.active_project()))
         @test pkgversion(Main.FixtureA) == v"0.2.0"
-        loaded, logs = logged_load!(state, LoadRequest(FIXTURE_B, :fb, nothing))
+        loaded, logs = loggedload!(state, LoadRequest(FIXTURE_B, :fb, nothing))
         conflict = "Not autoloading FixtureB: already-loaded FixtureA v0.2.0 differs from v0.1.0 \
             in the autoloads environment. Add FixtureB to the active project to load it there."
-        @test !loaded && warned_once(logs, ==(conflict))
+        @test !loaded && warnedonce(logs, ==(conflict))
         @testset "an explicit member using is guarded too" begin
-            err = try Ext.eval_with_member(:(using FixtureB), MEMBER) catch e; e end
+            err = try Ext.evalwithmember(:(using FixtureB), MEMBER) catch e; e end
             @test err isa ErrorException && err.msg == conflict
             @test LOAD_PATH == DEFAULT_LOAD_PATH
         end
         @test !isdefined(Main, :fb)
-        @test first(logged_load!(state, LoadRequest(FIXTURE_C, :fc, nothing)))
+        @test first(loggedload!(state, LoadRequest(FIXTURE_C, :fc, nothing)))
         @test isdefined(Main, :fc)
     end
 else

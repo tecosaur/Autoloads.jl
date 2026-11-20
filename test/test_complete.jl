@@ -11,16 +11,16 @@ pkg(name, n) = Base.PkgId(Base.UUID(UInt128(n)), name)
 const DATAFRAMES, BENCHMARKTOOLS, OTHER = pkg("DataFrames", 1), pkg("BenchmarkTools", 2), pkg("Other", 3)
 
 const AT = Autoloads.Sighting[(; version = v"1.0.0", julia = Autoloads.JULIA_MINOR)]
-const CATALOG = Autoloads.build_catalog([
+const CATALOG = Autoloads.buildcatalog([
     Autoloads.PkgNames(DATAFRAMES, AT, Set([:DataFrames, :DataFrame, :groupby, :shared]), Set([:metadata]), Set{Symbol}()),
     Autoloads.PkgNames(BENCHMARKTOOLS, AT, Set([:BenchmarkTools, Symbol("@btime")]), Set{Symbol}(), Set{Symbol}()),
     Autoloads.PkgNames(OTHER, AT, Set([:Other, :shared]), Set{Symbol}(), Set{Symbol}())])
-const CONFIG = Autoloads.parse_config(Dict{String, Any}())
-const REGISTRY = Autoloads.build_registry(CATALOG,
+const CONFIG = Autoloads.parseconfig(Dict{String, Any}())
+const REGISTRY = Autoloads.buildregistry(CATALOG,
     Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0" for id in (DATAFRAMES, BENCHMARKTOOLS, OTHER)), CONFIG)
 
 complete(prefix, qualifier = nothing; bound = Symbol[]) =
-    Ext.completions_for(REGISTRY, CATALOG, prefix, qualifier, in(bound))
+    Ext.completionsfor(REGISTRY, CATALOG, prefix, qualifier, in(bound))
 
 @testset "completions_for" begin
     @test complete("DataFr") == ["DataFrame", "DataFrames"]
@@ -37,7 +37,7 @@ complete(prefix, qualifier = nothing; bound = Symbol[]) =
 end
 
 @testset "completion context" begin
-    context(full, prefix) = Ext.completion_context(full, (ncodeunits(full) - ncodeunits(prefix)) => ncodeunits(full))
+    context(full, prefix) = Ext.completioncontext(full, (ncodeunits(full) - ncodeunits(prefix)) => ncodeunits(full))
     @test context("x = f(DataFr", "DataFr") == ("DataFr", nothing)
     @test context("DataFrames.gr", "gr") == ("gr", :DataFrames)
     @test context("1 + DataFrames.", "") == ("", :DataFrames)
@@ -71,12 +71,12 @@ LineEdit.complete_line(::StubProvider, s::StubState, ::Module; hint::Bool = fals
     previous = @atomic Ext.SESSION.session
     try
         @atomic Ext.SESSION.session = Ext.Session(CATALOG, REGISTRY, CONFIG, "", Set{String}())
-        completions, region, should_complete = LineEdit.complete_line(wrapper, StubState("DataFr"), Main)
+        completions, region, shouldcomplete = LineEdit.complete_line(wrapper, StubState("DataFr"), Main)
         @test completions isa Vector{NamedCompletion}
         @test [c.completion for c in completions] == ["Data", "DataFrame", "DataFrames"]
-        @test (region, should_complete) == (0 => 6, true)
-        inner_only = LineEdit.complete_line(wrapper, StubState("DataFr"), Base)
-        @test [c.completion for c in inner_only[1]] == ["DataFrame", "Data"]
+        @test (region, shouldcomplete) == (0 => 6, true)
+        inneronly = LineEdit.complete_line(wrapper, StubState("DataFr"), Base)
+        @test [c.completion for c in inneronly[1]] == ["DataFrame", "Data"]
     finally
         @atomic Ext.SESSION.session = previous
     end
