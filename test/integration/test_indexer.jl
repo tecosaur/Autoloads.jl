@@ -165,7 +165,37 @@ end
         finally
             chmod(dir, 0o755)
         end
-        @test count(log -> startswith(log.message, "Supervising the indexer"), logger.logs) == 1
+        @test count(log -> startswith(log.message, "Could not start the indexer"), logger.logs) == 1
+    end
+    @testset "a failure before any package is logged once" begin
+        # Too long for the indexing lock's name, though not the log's.
+        path = joinpath(mktempdir(), "c"^245)
+        logger = Test.TestLogger(min_level = Base.CoreLogging.Error)
+        Base.CoreLogging.with_logger(logger) do
+            foreach(_ -> finishrun(startrun(ix, Lazy, [FIXTURE_A]; path)), 1:2)
+        end
+        @test count(log -> startswith(log.message, "Indexing for"), logger.logs) == 1
+        @test !isfile(path) && occursin("exited with code 1", logof(path))
+    end
+    @testset "a process the indexed package starts does not hold up the run" begin
+        pidfile = tempname()
+        elapsed = @elapsed (; path) = runindexer(ix, Lazy, [FIXTURE_C]; env = ("FIXTUREC_SPAWN" => pidfile,))
+        isfile(pidfile) && run(ignorestatus(`kill $(read(pidfile, String))`))
+        @test :fc in namesof(path, FIXTURE_C).exported
+        @test elapsed < 30
+    end
+    @testset "an indexer outlives its supervisor" begin
+        path = joinpath(mktempdir(), "catalog")
+        entry = "$(FIXTURE_A.uuid)=FixtureA=$(GRAPH.versions[FIXTURE_A.uuid])"
+        cmd = Autoloads.juliacmd(`$(joinpath(Autoloads.SCRIPTS_DIR, "index.jl")) lazy $path $entry`; project = WS.member,
+                                 env = ("JULIA_DEPOT_PATH" => WS.depotpath,))
+        output = Pipe()
+        process = run(pipeline(cmd; stdin = devnull, stdout = output, stderr = devnull); wait = false)
+        close(output.in)
+        close(output)
+        wait(process)
+        @test success(process)
+        checkfixtureanames(path)
     end
     @testset "a held indexing lock stops the run" begin
         path = joinpath(mktempdir(), "catalog")

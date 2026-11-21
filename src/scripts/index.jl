@@ -6,7 +6,8 @@
 #     julia --project=<env> index.jl <lazy|background> <catalog path> <uuid=name=version>...
 #
 # (`-` for an unknown version). Reports `indexing <uuid>` and `indexed <uuid>`
-# around each package, and `precompiling start` and `done` around precompiling.
+# around each package, and `precompiling start` and `done` around precompiling,
+# on stdout; logs go to stderr.
 # Exits 0 at once if another indexer of this Julia version holds the lock, and
 # with INTERRUPTED_EXIT_CODE when interrupted.
 
@@ -38,7 +39,16 @@ end
 
 # Utility functions
 
-report(line) = (println(stdout, line); flush(stdout))
+# The supervisor may have exited with its REPL.
+function report(line)
+    try
+        println(stdout, line)
+        flush(stdout)
+    catch err
+        err isa Base.IOError || rethrow()
+        redirect_stdout(devnull)
+    end
+end
 
 # Precompile failures surface again, with context, when the package is loaded.
 function precompilepackages(packages)

@@ -6,6 +6,8 @@
 
 const DEFAULT_TIMEOUT_S = 300
 const LOG_MAX_BYTES = 1 << 20
+# For a process the indexer started, which may hold its output open.
+const OUTPUT_GRACE_S = 1.0
 # Ways of being stopped from outside; any other signal is the package's doing.
 const INTERRUPT_SIGNALS = (Base.SIGINT, Base.SIGTERM, Base.SIGHUP)
 const POLICY_FLAGS = Dict(Lazy => `--compiled-modules=existing --compile=min -O0`, Background => ``)
@@ -72,8 +74,11 @@ end
 function launchsupervised(cmd::Base.AbstractCmd, project::AbstractString, path::AbstractString, wanted, timeout_s::Integer,
                           reported::Set{String})
     output = Pipe()
+    logpath = path * ".log"
     process = try
-        run(pipeline(cmd; stdin = devnull, stdout = output, stderr = output); wait = false)
+        filesize(logpath) > LOG_MAX_BYTES && rm(logpath)
+        # Directly, to outlive this process.
+        run(pipeline(pipeline(cmd; stderr = logpath, append = true); stdin = devnull, stdout = output); wait = false)
     catch err
         isunreported!(reported, err) &&
             @error "Could not start the indexer for $project; its packages are retried on the next refresh" path exception =
@@ -84,8 +89,16 @@ function launchsupervised(cmd::Base.AbstractCmd, project::AbstractString, path::
     pid = getpid(process)
     @debug "Indexer started" pid project count = length(wanted)
     try
-        supervise(process, pid, output, path, wanted, timeout_s)
-        empty!(reported)
+        hasindexed = supervise(process, pid, output, path, wanted, timeout_s)
+        isinterrupted = process.termsignal in INTERRUPT_SIGNALS || process.exitcode == INTERRUPTED_EXIT_CODE
+        if hasindexed || success(process) || isinterrupted
+            empty!(reported)
+        else
+            err = ErrorException("the indexer exited with code $(process.exitcode), signal $(process.termsignal), \
+                                  before indexing any package")
+            isunreported!(reported, err) &&
+                @error "Indexing for $project failed; its packages are retried on the next refresh" log = logpath exception = err
+        end
     catch err
         isunreported!(reported, err) &&
             @error "Supervising the indexer for $project failed; its packages are retried on the next refresh" pid path exception =
@@ -107,22 +120,28 @@ function supervise(process::Base.Process, pid::Integer, output::Pipe, path::Abst
         end
     end
     inprogress = nothing
+    hasindexed = false
+    errormonitor(@async (wait(process); sleep(OUTPUT_GRACE_S); close(output)))
     try
         # Armed from `indexing` to `indexed`, so startup, precompilation and exit never count.
-        logpath = path * ".log"
-        open(logpath, if filesize(logpath) > LOG_MAX_BYTES "w" else "a" end) do log
-            for line in eachline(output)
-                println(log, line)
-                flush(log)
-                if startswith(line, "indexing ")
-                    uuid = tryparse(Base.UUID, chopprefix(line, "indexing "))
-                    haskey(byuuid, uuid) || continue
-                    inprogress = byuuid[uuid]
-                    arm!()
-                elseif inprogress !== nothing && line == "indexed $(first(inprogress).uuid)"
-                    inprogress = nothing
-                    disarm!()
+        open(path * ".log", "a") do log
+            try
+                for line in eachline(output)
+                    println(log, line)
+                    flush(log)
+                    if startswith(line, "indexing ")
+                        uuid = tryparse(Base.UUID, chopprefix(line, "indexing "))
+                        haskey(byuuid, uuid) || continue
+                        inprogress = byuuid[uuid]
+                        hasindexed = true
+                        arm!()
+                    elseif inprogress !== nothing && line == "indexed $(first(inprogress).uuid)"
+                        inprogress = nothing
+                        disarm!()
+                    end
                 end
+            catch err
+                err isa Base.IOError || rethrow()  # closed after the grace period
             end
             disarm!()
             wait(process)
@@ -135,6 +154,7 @@ function supervise(process::Base.Process, pid::Integer, output::Pipe, path::Abst
             writecatalog!(path, CatalogRecord[failure])
         end
         success(process) || releaseindexinglock(path * INDEXING_LOCK_SUFFIX, pid)
+        hasindexed
     finally
         disarm!()
         # Never leave the child running unsupervised after a supervisor error.
