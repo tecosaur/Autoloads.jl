@@ -124,7 +124,7 @@ elseif GROUP == "sequencing"
         @test_throws MethodError runinput("x = 1; fa(x)")
         @test isloaded(FIXTURE_A)
     end
-    @testset "only environment changes forget failed loads" begin
+    @testset "environment changes and Pkg commands forget failed loads" begin
         failing = Base.PkgId(Base.UUID(0xfa11), "Failing")
         runinput("1")
         push!(Ext.LOAD.failed, failing)
@@ -136,6 +136,10 @@ elseif GROUP == "sequencing"
         @test isempty(Ext.LOAD.failed)
         push!(Ext.LOAD.failed, failing)
         touch(joinpath(MEMBER, "Project.toml"))
+        runinput("1")
+        @test isempty(Ext.LOAD.failed)
+        push!(Ext.LOAD.failed, failing)
+        Autoloads.notifyenvchange()
         runinput("1")
         @test isempty(Ext.LOAD.failed)
     end

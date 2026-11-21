@@ -20,6 +20,7 @@ const NO_ENV = id -> nothing
     @test availability(E) == (Hints.AutoloadPackage, nothing)
     @test availability(D) == (Hints.Elsewhere, nothing)
     @test availability(A, Set{Base.UUID}()) == (Hints.InProjectManifest, nothing)
+    @test availability(Base.PkgId(nothing, "Base.Threads")) == (Hints.Builtin, nothing)
 end
 
 @testset "ranking" begin
@@ -37,7 +38,8 @@ end
 
 @testset "re-export sources" begin
     graph = Autoloads.ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(id.uuid => nothing for id in (A, B, C)),
-                                    Dict(A.uuid => [B.uuid], B.uuid => Base.UUID[], C.uuid => Base.UUID[]))
+                                    Dict(A.uuid => [B.uuid], B.uuid => Base.UUID[], C.uuid => Base.UUID[]),
+                                    Dict(id.uuid => id.name for id in (A, B, C)))
     providers = [(A, false), (B, true), (C, true)]
     @test Hints.reexportsources(providers, graph) == Dict(A => ["B"])
     @test Hints.reexportsources([(D, false), (B, true), (C, true)], graph) == Dict(D => ["B", "C"])
@@ -60,6 +62,9 @@ end
           • using E  (an autoload package)
           • pkg> add D  (or pkg> autoloads add D)"""
     @test occursin("\e[36musing A\e[39m", sprint(print, text; context = :color => true))
+    builtin = Hints.RankedProvider(Base.PkgId(nothing, "Base.Threads"), true, Hints.Builtin, nothing)
+    @test endswith(Hints.formathint(:nthreads, [builtin], Dict{Base.PkgId, Vector{String}}(), true),
+                   "• using Base.Threads  (part of Julia)")
     withoutmember = Hints.formathint(:fa, ranked[5:5], Dict{Base.PkgId, Vector{String}}(), false)
     @test endswith(withoutmember, "• pkg> add D  (run pkg> autoloads init to autoload packages)")
 end

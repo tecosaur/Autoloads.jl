@@ -13,15 +13,18 @@ const DATAFRAMES, BENCHMARKTOOLS, OTHER = pkg("DataFrames", 1), pkg("BenchmarkTo
 const AT = Autoloads.Sighting[(; version = v"1.0.0", julia = Autoloads.JULIA_MINOR)]
 const CATALOG = Autoloads.buildcatalog([
     Autoloads.PkgNames(DATAFRAMES, AT, Set([:DataFrames, :DataFrame, :groupby, :shared]), Set([:metadata]), Set{Symbol}()),
+    # A newer version than autoloads, offering more.
+    Autoloads.PkgNames(DATAFRAMES, Autoloads.Sighting[(; version = v"2.0.0", julia = Autoloads.JULIA_MINOR)],
+                       Set([:DataFrames, :DataFrame, :groupby, :grouped, :shared]), Set([:metadata]), Set{Symbol}()),
     Autoloads.PkgNames(BENCHMARKTOOLS, AT, Set([:BenchmarkTools, Symbol("@btime")]), Set{Symbol}(), Set{Symbol}()),
     Autoloads.PkgNames(OTHER, AT, Set([:Other, :shared]), Set{Symbol}(), Set{Symbol}())])
 const CONFIG = Autoloads.parseconfig(Dict{String, Any}())
 const AUTOLOAD = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0" for id in (DATAFRAMES, BENCHMARKTOOLS, OTHER))
 const REGISTRY = Autoloads.buildregistry(CATALOG, AUTOLOAD, CONFIG)
 const NO_ENV = (; deps = Base.PkgId[], graph = Autoloads.ManifestGraph())
+const SESSION = Autoloads.Session(CONFIG, "", NO_ENV, nothing, NO_ENV, CATALOG, AUTOLOAD, REGISTRY)
 
-complete(prefix, qualifier = nothing; bound = Symbol[]) =
-    Ext.completionsfor(REGISTRY, CATALOG, prefix, qualifier, in(bound))
+complete(prefix, qualifier = nothing; bound = Symbol[]) = Ext.completionsfor(SESSION, prefix, qualifier, in(bound))
 
 @testset "completions_for" begin
     @test complete("DataFr") == ["DataFrame", "DataFrames"]
@@ -29,7 +32,7 @@ complete(prefix, qualifier = nothing; bound = Symbol[]) =
     @test complete("@bt") == ["@btime"]
     @test isempty(complete("sha"))  # ambiguous
     @test isempty(complete("meta"))  # public only
-    @test complete("gr", :DataFrames) == ["groupby"]
+    @test complete("gr", :DataFrames) == ["groupby"]  # of the version that autoloads
     @test complete("met", :DataFrames) == ["metadata"]
     @test complete("", :BenchmarkTools) == ["@btime", "BenchmarkTools"]
     @test isempty(complete("gr", :DataFrames; bound = [:DataFrames]))
@@ -71,7 +74,7 @@ LineEdit.complete_line(::StubProvider, s::StubState, ::Module; hint::Bool = fals
     wrapper = Ext.CompletionWrapper(stub)
     previous = @atomic Ext.SESSION.session
     try
-        @atomic Ext.SESSION.session = Autoloads.Session(CONFIG, "", NO_ENV, nothing, NO_ENV, CATALOG, AUTOLOAD, REGISTRY)
+        @atomic Ext.SESSION.session = SESSION
         completions, region, shouldcomplete = LineEdit.complete_line(wrapper, StubState("DataFr"), Main)
         @test completions isa Vector{NamedCompletion}
         @test [c.completion for c in completions] == ["Data", "DataFrame", "DataFrames"]

@@ -54,6 +54,23 @@ end
         @test_throws Pkg.Types.PkgError parsed("autoloads add")
         @test_throws Pkg.Types.PkgError parsed("autoloads init x")
     end
+    @testset "rm and up complete the packages they act on" begin
+        complete(input) = first(Base.get_extension(Pkg, :REPLExt).completions(input, lastindex(input)))
+        globalenv = joinpath(mktempdir(), "environments", "v$(VERSION.major).$(VERSION.minor)")
+        write(joinpath(mkpath(joinpath(globalenv, "autoloads")), "Project.toml"),
+              "[deps]\nMemberDep = \"$(Base.UUID(UInt128(2)))\"\n")
+        write(joinpath(globalenv, "Project.toml"), "[deps]\nGlobalDep = \"$(Base.UUID(UInt128(1)))\"\n")
+        saved = copy(DEPOT_PATH)
+        copy!(DEPOT_PATH, [dirname(dirname(globalenv))])
+        try
+            @test complete("autoloads rm Mem") == ["MemberDep"]
+            @test isempty(complete("autoloads rm Glob"))
+            @test complete("autoloads up Glob") == ["GlobalDep"]
+            @test complete("autoloads up Mem") == ["MemberDep"]
+        finally
+            copy!(DEPOT_PATH, saved)
+        end
+    end
     @testset "status completes autoload packages" begin
         complete(input) = first(Base.get_extension(Pkg, :REPLExt).completions(input, lastindex(input)))
         @test complete("autoloads st Base6") == ["Base64"]
@@ -64,8 +81,8 @@ end
         help = sprint(show, MIME("text/plain"), Pkg.REPLMode.help)
         @test all(cmd -> occursin("autoloads $cmd", help), ("add", "init", "remove", "status", "update"))
     end
-    @testset "environment-changing commands request a refresh" begin
-        for name in Ext.ENV_CHANGING_COMMANDS
+    @testset "refreshing commands request a refresh" begin
+        for name in Ext.REFRESHING_COMMANDS
             @test PACKAGE_SPECS[name].api isa Ext.RefreshingApi
         end
         @test PACKAGE_SPECS["up"] === PACKAGE_SPECS["update"]

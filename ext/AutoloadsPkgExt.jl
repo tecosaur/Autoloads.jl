@@ -56,7 +56,8 @@ const COMMANDS = try
                 With `-g`, also add them to every other Julia version's autoloads environment.
                 """),
         command(name = "remove", short_name = "rm", api = Autoloads.remove, should_splat = false,
-                arg_count = 1 => Inf, option_spec = GLOBAL_OPTION, completions = :complete_installed_packages,
+                arg_count = 1 => Inf, option_spec = GLOBAL_OPTION,
+                completions = (_...; kwargs...) -> Autoloads.depnames(Autoloads.memberdir()),
                 description = "remove packages from the autoloads",
                 help = """
                     autoloads [rm|remove] [-g|--global] pkg ...
@@ -65,7 +66,8 @@ const COMMANDS = try
                 from every other Julia version's autoloads environment.
                 """),
         command(name = "update", short_name = "up", api = Autoloads.update, should_splat = false,
-                arg_count = 0 => Inf, option_spec = GLOBAL_OPTION, completions = :complete_installed_packages,
+                arg_count = 0 => Inf, option_spec = GLOBAL_OPTION,
+                completions = (_...; kwargs...) -> Autoloads.depnames(Autoloads.globalenvdir(), Autoloads.memberdir()),
                 description = "update the global and autoload packages",
                 help = """
                     autoloads [up|update] [-g|--global] [pkg ...]
@@ -91,8 +93,8 @@ catch err
     sprint(showerror, err)
 end
 
-# `pkg>` commands after which the active environments may provide different names.
-const ENV_CHANGING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "resolve", "instantiate"]
+# `pkg>` commands after which the active environments may provide different names, or a failed load succeed.
+const REFRESHING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "resolve", "instantiate", "build", "precompile"]
 
 const COMMAND_SPEC_FIELDS = (:canonical_name, :short_name, :api, :should_splat, :argument_spec,
                              :option_specs, :completions, :description, :help)
@@ -110,14 +112,14 @@ end
 """
     wrappkgcommands!()
 
-Make the `ENV_CHANGING_COMMANDS` request an autoload refresh, and `up` in the
+Make the `REFRESHING_COMMANDS` request an autoload refresh, and `up` in the
 global environment also update the autoload packages unless `uphook` is off.
 Idempotent; warns and changes nothing if Pkg's layout is unexpected.
 """
 function wrappkgcommands!()
     specs = if isdefined(REPLMode, :SPECS) && isdefined(REPLMode, :CommandSpec) get(REPLMode.SPECS, "package", nothing) end
     if !(specs isa Dict{String, REPLMode.CommandSpec}) || fieldnames(REPLMode.CommandSpec) != COMMAND_SPEC_FIELDS ||
-       !all(name -> haskey(specs, name), ENV_CHANGING_COMMANDS)
+       !all(name -> haskey(specs, name), REFRESHING_COMMANDS)
         @warn "Autoloads cannot refresh after `pkg>` commands: this Pkg's REPLMode.SPECS/CommandSpec layout is not recognised" version = Pkg.pkgversion(Pkg)
         return
     end
@@ -132,7 +134,7 @@ function wrappkgcommands!()
             false
         end
     end
-    for original in unique(objectid, specs[name] for name in ENV_CHANGING_COMMANDS)
+    for original in unique(objectid, specs[name] for name in REFRESHING_COMMANDS)
         original.api isa RefreshingApi && continue
         api = RefreshingApi(if original === up
                                 (args...; kwargs...) -> original.api(args...; workspace = withautoloads(), kwargs...)

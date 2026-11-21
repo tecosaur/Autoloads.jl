@@ -4,21 +4,22 @@
 # Run by `Autoloads.add`, `remove` and `update` as
 #
 #     julia --project=<env> pkg.jl <add|remove|update|resolve> <package>...
+#
+# For `add`, each package is an absolute path to develop, a git URL, or a name.
 
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
 
 function main(op, pkgs)
     # A git URL (`url#rev` picks a revision), or else a registered name.
     function packagespec(pkg)
-        isurl = occursin("://", pkg) || startswith(pkg, "git@") || endswith(pkg, ".git")
-        isurl || return Pkg.PackageSpec(name = pkg)
+        occursin("://", pkg) || startswith(pkg, "git@") || return Pkg.PackageSpec(name = pkg)
         url, rev = if occursin('#', pkg) String.(split(pkg, '#'; limit = 2)) else (pkg, nothing) end
         Pkg.PackageSpec(; url, rev)
     end
     if op == "add"
-        paths = filter(isdir, pkgs)
+        paths = filter(isabspath, pkgs)
         isempty(paths) || Pkg.develop([Pkg.PackageSpec(path = path) for path in paths])
-        specs = [packagespec(pkg) for pkg in pkgs if !isdir(pkg)]
+        specs = [packagespec(pkg) for pkg in pkgs if !isabspath(pkg)]
         isempty(specs) || Pkg.add(specs)
     elseif op == "remove"
         Pkg.rm(pkgs)

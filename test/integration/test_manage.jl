@@ -345,6 +345,19 @@ end
                 @test membernames(ws.member) == ["FixtureA", "FixtureC"]
                 @test notified[] == 6
             end
+            @testset "a bare name is a name, even beside a directory of that name" begin
+                mktempdir() do dir
+                    cp(fixturepath(FIXTURE_B), joinpath(dir, "FixtureB"))
+                    cd(dir) do
+                        @test_logs (:info, r"Use `\./FixtureB`") match_mode = :any begin
+                            @test_throws ErrorException captured(() -> Autoloads.add(["FixtureB"]), ws.depotpath)
+                        end
+                        @test membernames(ws.member) == ["FixtureA", "FixtureC"]
+                        captured(() -> Autoloads.add(["./FixtureB"]), ws.depotpath)
+                        @test membernames(ws.member) == ["FixtureA", "FixtureB", "FixtureC"]
+                    end
+                end
+            end
             nomember = freshglobalenv("")
             @testset "names as separate arguments" begin
                 @test_throws r"no autoloads environment.*autoloads init" indepot(() -> Autoloads.remove("FixtureA"), nomember.depotpath)
@@ -400,6 +413,16 @@ end
                           "JULIA_PKG_OFFLINE" => "true")
             @test isempty(deferred(VERSION))
             @test !Autoloads.applydeferred!(ws.globalenv; output)
+        end
+        @testset "deferred updates skip packages the environment lacks" begin
+            output = IOBuffer()
+            apply() = withenv(() -> Autoloads.applydeferred!(ws.globalenv; output), "JULIA_DEPOT_PATH" => ws.depotpath,
+                              "JULIA_PKG_OFFLINE" => "true")
+            for pkgs in (["Gone"], ["FixtureC", "Gone"])
+                Autoloads.defer!(VERSION, "update", pkgs)
+                @test apply()
+                @test isempty(deferred(VERSION))
+            end
         end
         @testset "changes deferred while applying are kept" begin
             path = joinpath(Autoloads.statedir(), Autoloads.DEFERRED_FILE)

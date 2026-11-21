@@ -55,13 +55,14 @@ end
     add(pkgs::AbstractString...; allversions = false)
 
 Add packages to the global autoloads environment, first creating it with
-`init` if it does not exist yet: paths of existing directories are
-developed, git URLs (`url#rev` for a revision) are added from their
-repository, and names from the registries. Recorded indexing failures of
-the packages are cleared, so they are indexed again. With `allversions`,
-the packages are also added, with the same source and compat, to the
-autoloads environment of every other Julia version that has one, each
-resolving it when its Julia next starts a REPL session.
+`init` if it does not exist yet: git URLs (`url#rev` for a revision) are
+added from their repository, paths (as `pkg> add` reads them: with a `/` or
+`\\`, or `.` or `..`) are developed, and names are added from the
+registries. Recorded indexing failures of the packages are cleared, so they
+are indexed again. With `allversions`, the packages are also added, with the
+same source and compat, to the autoloads environment of every other Julia
+version that has one, each resolving it when its Julia next starts a REPL
+session.
 
 # Raises
 - `ArgumentError` when `pkgs` is empty.
@@ -76,16 +77,23 @@ Autoloads.add("Example")
 function add(pkgs::Vector{String}; allversions::Bool = false)
     isempty(pkgs) && throw(ArgumentError("Autoloads.add: no packages given"))
     projectname(dir) = if isfile(joinpath(dir, "Project.toml")) get(Base.parsed_toml(joinpath(dir, "Project.toml")), "name", nothing) end
+    # As `pkg> add` reads its arguments: a URL, else a path if it has a separator or is `.` or `..`, else a name.
+    islocalpath(pkg) = !occursin("://", pkg) && !startswith(pkg, "git@") &&
+        (occursin('/', pkg) || occursin('\\', pkg) || pkg in (".", ".."))
+    for pkg in pkgs
+        islocalpath(pkg) || !isdir(pkg) || @info "Use `./$pkg` to add the local directory at `$(Base.contractuser(abspath(pkg)))`"
+    end
     globaldir = globalenvdir()
     member = memberdir(globaldir)
     memberproject = joinpath(member, "Project.toml")
     isfile(memberproject) || init()
-    specs = [if isdir(expanduser(pkg)) abspath(expanduser(pkg)) else pkg end for pkg in pkgs]
+    # Absolute, as the Pkg script tells paths apart.
+    specs = [if islocalpath(pkg) abspath(expanduser(pkg)) else pkg end for pkg in pkgs]
     before = Set(projectdeps(memberproject))
     # A failed `Pkg.add` may follow a successful `Pkg.develop`, so notify regardless.
     try
         runpkg(:add, pkgs, specs, member)
-        names = [if isdir(spec) projectname(spec) else spec end for spec in specs]
+        names = [if isabspath(spec) something(projectname(spec), spec) else spec end for spec in specs]
         added = [id for id in projectdeps(memberproject) if id.name in names || id ∉ before]
         clearfailures!(catalogpath(), added)
         allversions && spread!(:add, globaldir, [id.name for id in added])
@@ -118,12 +126,7 @@ function remove(pkgs::Vector{String}; allversions::Bool = false)
     isempty(pkgs) && throw(ArgumentError("Autoloads.remove: no packages given"))
     globaldir = globalenvdir()
     member = existingmember(globaldir)
-    present = if allversions
-        names = Set(id.name for id in projectdeps(joinpath(member, "Project.toml")))
-        filter(in(names), pkgs)
-    else
-        pkgs
-    end
+    present = if allversions filter(in(depnames(member)), pkgs) else pkgs end
     isempty(present) || runpkg(:remove, present, present, member)
     allversions && spread!(:remove, globaldir, pkgs)
     notifyenvchange()
@@ -269,10 +272,14 @@ function applydeferred!(globaldir::AbstractString; output::IO = stdout)
     content = withfilelock(() -> read(path, String), path)
     requests = split.(split(content, '\n'; keepempty = false))
     updates = [String.(request[2:end]) for request in requests if first(request) == "update"]
-    if isempty(updates)
+    # Packages since removed, or never added here, are not updated.
+    installed = depnames(globaldir, memberdir(globaldir))
+    pkgs = unique!([pkg for request in updates for pkg in request if pkg in installed])
+    if any(isempty, updates)
+        runpkg(:update, String[], String[], globaldir; output)
+    elseif isempty(pkgs)
         runpkg(:resolve, String[], String[], globaldir; output)
     else
-        pkgs = if any(isempty, updates) String[] else unique!(reduce(vcat, updates)) end
         runpkg(:update, pkgs, pkgs, globaldir; output)
     end
     dropapplied!(path, content)
@@ -300,6 +307,9 @@ function adoptprevious!(globaldir::AbstractString; output::IO = stdout)
 end
 
 # Utility functions
+
+depnames(dirs::AbstractString...) =
+    sort!(unique!([id.name for dir in dirs for id in projectdeps(joinpath(dir, "Project.toml"))]))
 
 function createenvironment(globaldir::AbstractString, source::AbstractString; output::IO = stdout)
     runpkgscript(:init, String[], `$(joinpath(SCRIPTS_DIR, "init.jl")) $globaldir $source`;

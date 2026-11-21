@@ -15,7 +15,8 @@ LoadState() = LoadState(Set{Tuple{Base.PkgId, Union{Symbol, Nothing}}}(), Set{Ba
     load!(state::LoadState, req::LoadRequest, member::AbstractString; announce::Bool = true) -> Bool
 
 Load `req` into `Main`: from the active environment if it has the package, else
-from `member`, once the versions it would load agree with those loaded. Returns
+from `member`, once the versions it would load agree with those loaded or
+earlier on `LOAD_PATH`. Returns
 whether it loaded; a failure is logged once, and not retried until
 `forgetfailures!`. An interrupt propagates and records nothing.
 """
@@ -83,17 +84,23 @@ isinterrupt(err) = err isa InterruptException ||
 function checkversions(id::Base.PkgId, member::AbstractString)
     graph = manifestgraph(joinpath(member, "Project.toml"))
     closure = dependencyclosure(graph, id.uuid)
-    loaded = @lock Base.require_lock [(pkg, mod) for (pkg, mod) in Base.loaded_modules if pkg.uuid in closure]
-    conflicts = Tuple{String, VersionNumber, VersionNumber}[]
-    for (pkg, mod) in loaded
-        wanted = get(graph.versions, pkg.uuid, nothing)
-        actual = pkgversion(mod)
-        wanted === nothing || actual === nothing || actual == wanted ||
-            push!(conflicts, (pkg.name, actual, wanted))
+    # What would load: the loaded version, else the first on `LOAD_PATH`, where the member comes last.
+    loading = Dict{Base.UUID, Tuple{Union{VersionNumber, Nothing}, String}}()
+    for env in reverse(Base.load_path()), (uuid, version) in manifestgraph(env).versions
+        loading[uuid] = (version, "from $(Base.contractuser(env))")
+    end
+    @lock Base.require_lock for (pkg, mod) in Base.loaded_modules
+        pkg.uuid in closure && (loading[pkg.uuid] = (pkgversion(mod), "already loaded"))
+    end
+    conflicts = String[]
+    for uuid in closure
+        wanted = @something(get(graph.versions, uuid, nothing), continue)
+        actual, source = @something(get(loading, uuid, nothing), continue)
+        actual === nothing || actual == wanted ||
+            push!(conflicts, "$(graph.names[uuid]) v$actual ($source) differs from v$wanted")
     end
     isempty(conflicts) && return
-    differences = join(("$name v$loaded differs from v$wanted" for (name, loaded, wanted) in sort!(conflicts)), ", ")
-    error("Not autoloading $(id.name): already-loaded $differences in the autoloads environment. ",
+    error("Not autoloading $(id.name): $(join(sort!(conflicts), ", ")) in the autoloads environment. ",
           "Add $(id.name) to the active project to load it there.")
 end
 

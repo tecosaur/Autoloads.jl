@@ -105,12 +105,19 @@ elseif GROUP == "used"
     end
 elseif GROUP == "project"
     @testset "active project provides FixtureA v0.2.0" begin
+        @testset "a dependency not yet loaded is checked too" begin
+            loaded, logs = loggedload!(Ext.LoadState(), LoadRequest(FIXTURE_B, :fb, nothing))
+            @test !loaded && warnedonce(logs, ==("Not autoloading FixtureB: FixtureA v0.2.0 \
+                (from $(Base.contractuser(Base.active_project()))) differs from v0.1.0 in the autoloads environment. \
+                Add FixtureB to the active project to load it there."))
+            @test !haskey(Base.loaded_modules, FIXTURE_A)
+        end
         state = Ext.LoadState()
         @test first(loggedload!(state, LoadRequest(FIXTURE_A, :fa, nothing)))
         @test startswith(pathof(Main.FixtureA), dirname(Base.active_project()))
         @test pkgversion(Main.FixtureA) == v"0.2.0"
         loaded, logs = loggedload!(state, LoadRequest(FIXTURE_B, :fb, nothing))
-        conflict = "Not autoloading FixtureB: already-loaded FixtureA v0.2.0 differs from v0.1.0 \
+        conflict = "Not autoloading FixtureB: FixtureA v0.2.0 (already loaded) differs from v0.1.0 \
             in the autoloads environment. Add FixtureB to the active project to load it there."
         @test !loaded && warnedonce(logs, ==(conflict))
         @testset "an explicit member using is guarded too" begin

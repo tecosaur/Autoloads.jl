@@ -8,9 +8,11 @@ const BUILTIN_MODULES = (Base.Threads,)
 struct ManifestGraph
     versions::Dict{Base.UUID, Union{VersionNumber, Nothing}}  # `nothing` for a stdlib
     deps::Dict{Base.UUID, Vector{Base.UUID}}
+    names::Dict{Base.UUID, String}
 end
 
-ManifestGraph() = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}())
+ManifestGraph() =
+    ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}(), Dict{Base.UUID, String}())
 
 const Environment = @NamedTuple{deps::Vector{Base.PkgId}, graph::ManifestGraph}
 
@@ -62,9 +64,10 @@ function manifestgraph(projectfile::AbstractString)
     entries = get(Base.parsed_toml(manifest), "deps", Dict{String, Any}())::Dict{String, Any}
     uuidof = Dict{String, Base.UUID}(name => Base.UUID(first(infos::Vector{Any})["uuid"]::String)
                                       for (name, infos) in entries)
-    for infos in values(entries), info in infos::Vector{Any}
+    for (name, infos) in entries, info in infos::Vector{Any}
         info = info::Dict{String, Any}
         uuid = Base.UUID(info["uuid"]::String)
+        graph.names[uuid] = name
         graph.versions[uuid] = if haskey(info, "version") VersionNumber(info["version"]::String) end
         graph.deps[uuid] = dependencyuuids(get(info, "deps", String[]), uuidof)
     end
@@ -95,6 +98,7 @@ function environment(projectfile::Union{String, Nothing})
     if haskey(project, "name") && haskey(project, "uuid")
         uuid = Base.UUID(project["uuid"]::String)
         graph.versions[uuid] = if haskey(project, "version") VersionNumber(project["version"]::String) end
+        graph.names[uuid] = project["name"]::String
         push!(deps, Base.PkgId(uuid, project["name"]::String))
     end
     (; deps, graph)

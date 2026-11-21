@@ -37,10 +37,12 @@ mutable struct Runtime
     stamp::Union{EnvStamp, Nothing}  # owned by the REPL backend task
     @atomic isstopping::Bool
     @atomic hasrefreshed::Bool
+    # Set on `notifyenvchange`, as after a Pkg command a failed load may succeed.
+    @atomic shouldretry::Bool
 end
 
 Runtime(events::Channel{Event}, member::AbstractString, catalogpath::AbstractString) =
-    Runtime(events, String(member), String(catalogpath), nothing, false, false)
+    Runtime(events, String(member), String(catalogpath), nothing, false, false, false)
 
 mutable struct Worker
     const runtime::Runtime
@@ -75,7 +77,7 @@ function startsession!()
     events = runtime.events
     RUNTIME[] = runtime
     push!(Base.package_callbacks, ObserveLoad(events))
-    Autoloads.ENV_CHANGED[] = () -> put!(events, Refresh())
+    Autoloads.ENV_CHANGED[] = () -> (@atomic runtime.shouldretry = true; put!(events, Refresh()))
     errormonitor(Threads.@spawn runworker(Worker(runtime, Indexer())))
     atexit(() -> stopworker!(runtime))
     put!(events, Refresh())
@@ -245,11 +247,14 @@ function maintainenvironment!(worker::Worker)
             @info "Autoloads set up its environment for Julia $(VERSION.major).$(VERSION.minor), carrying over \
                    $(join(previous.names, ", ")) and the settings from Julia $(VERSION.major).$(previous.minor)"
     end
-    stamp = filestamp(joinpath(statedir(), Autoloads.DEFERRED_FILE))
+    deferred = joinpath(statedir(), Autoloads.DEFERRED_FILE)
+    stamp = filestamp(deferred)
     stamp == worker.deferredstamp && return
     worker.deferredstamp = stamp
     stamp == MISSING_FILE_STAMP ||
-        quietly(output -> Autoloads.applydeferred!(globaldir; output), "apply the changes made from other Julia versions")
+        quietly(output -> Autoloads.applydeferred!(globaldir; output),
+                "apply the changes made from other Julia versions; they are retried at the next start, or \
+                 discarded by deleting $deferred")
 end
 
 function warnunknown!(reported::Set{String}, cfg::Config, autoload::AbstractDict)
@@ -290,6 +295,7 @@ end
 # The transform
 
 function transforminput(runtime::Runtime, ex)
+    (@atomicswap runtime.shouldretry = false) && forgetfailures!(LOAD)
     active = Base.active_project()
     rootproject = joinpath(dirname(runtime.member), "Project.toml")
     files = (rootproject, manifestof(rootproject), preferencefiles(rootproject)...,

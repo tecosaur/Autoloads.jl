@@ -7,7 +7,7 @@
 const MAX_HINT_PROVIDERS = 3
 
 # Most readily usable first: hints are ranked in this order.
-@enum Availability DirectDep InProjectManifest OnLoadPath AutoloadPackage Elsewhere
+@enum Availability Builtin DirectDep InProjectManifest OnLoadPath AutoloadPackage Elsewhere
 
 struct RankedProvider
     id::Base.PkgId
@@ -18,6 +18,7 @@ end
 
 function availability(id::Base.PkgId, deps::Set{Base.UUID}, manifest::Set{Base.UUID}, memberdeps::Set{Base.UUID},
                       loadpathenv::Function)
+    id.uuid === nothing && return Builtin, nothing
     id.uuid in deps && return DirectDep, nothing
     id.uuid in manifest && return InProjectManifest, nothing
     env = loadpathenv(id)
@@ -35,7 +36,9 @@ function formathint(var::Symbol, ranked::Vector{RankedProvider}, sources::Dict{B
     hint = styled"\nHint: {code:$var} is provided by packages that are not loaded:"
     for p in ranked
         name = p.id.name
-        command, note = if p.availability == DirectDep
+        command, note = if p.availability == Builtin
+            "using $name", "part of Julia"
+        elseif p.availability == DirectDep
             "using $name", "a dependency of the active project"
         elseif p.availability == InProjectManifest
             "pkg> add $name", "already resolved in the active project's manifest"

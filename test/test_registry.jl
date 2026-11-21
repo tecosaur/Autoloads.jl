@@ -23,7 +23,7 @@ cfgof(; kwargs...) = parseconfig(Dict{String, Any}("stdlib" => false, "project" 
                                                      (string(k) => v for (k, v) in kwargs)...))
 nograph = ManifestGraph()
 graphof(pairs...) = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(id.uuid => v for (id, v) in pairs),
-                                   Dict{Base.UUID, Vector{Base.UUID}}())
+                                   Dict{Base.UUID, Vector{Base.UUID}}(), Dict(id.uuid => id.name for (id, _) in pairs))
 registryof(records, autoload, cfg = cfgof()) = buildregistry(buildcatalog(records), autoload, cfg)
 
 @testset "catalog" begin

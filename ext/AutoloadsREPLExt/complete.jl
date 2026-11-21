@@ -7,19 +7,18 @@ struct CompletionWrapper{P <: LineEdit.CompletionProvider} <: LineEdit.Completio
     inner::P
 end
 
-function completionsfor(reg::Registry, cat::Catalog, prefix::String, qualifier::Union{Symbol, Nothing},
-                         isbound::Function)
+function completionsfor((; registry, catalog, autoload)::Session, prefix::String, qualifier::Union{Symbol, Nothing},
+                        isbound::Function)
     matches = String[]
     if qualifier === nothing
-        for name in keys(reg.owners)
+        for name in keys(registry.owners)
             text = String(name)
             startswith(text, prefix) && !isbound(name) && push!(matches, text)
         end
     else
-        id = owner(reg, qualifier)
+        id = owner(registry, qualifier)
         (id === nothing || id.name != String(qualifier) || isbound(qualifier)) && return matches
-        # TODO: use the autoload set's version once `Registry`/`Session` carries it.
-        record = namesat(cat, id, nothing)
+        record = namesat(catalog, id, autoload[id])
         record === nothing && return matches
         for names in (record.exported, record.public, record.reexported), name in names
             text = String(name)
@@ -108,7 +107,7 @@ function withautoloadable(result, session::Session, full::String)
     context = completioncontext(full, region)
     context === nothing && return result
     isbound(name) = isdefined(Main, name)
-    names = completionsfor(session.registry, session.catalog, context..., isbound)
+    names = completionsfor(session, context..., isbound)
     isempty(names) && return result
     merged = unique!(c -> c.completion, [completions; LineEdit.NamedCompletion.(names)])
     sort!(merged; by = c -> c.completion), region, shouldcomplete

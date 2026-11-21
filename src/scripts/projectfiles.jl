@@ -60,7 +60,7 @@ function carrieddeps(projectfile)
     else
         source
     end
-    sources = Dict{String, Any}(name => absolute(get(declared, name, recorded[uuid]))
+    sources = Dict{String, Any}(name => absolute(get(declared, name, get(recorded, uuid, nothing)))
                                 for (name, uuid) in deps if haskey(declared, name) || haskey(recorded, uuid))
     compat = filter(((name, _),) -> name == "julia" || haskey(deps, name), get(project, "compat", Dict{String, Any}()))
     filter(((_, table),) -> !isempty(table), Dict{String, Any}("deps" => deps, "compat" => compat, "sources" => sources))

@@ -67,7 +67,7 @@ them claims; given packages, it lists the names each offers and which of them
 autoload it.
 
 ~autoloads add~ takes names, git URLs (=url#rev= for a revision), or paths of
-directories to develop; ~add Foo~ develops =./Foo= if that directory exists.
+directories to develop. As with ~pkg> add~, a path has a =/= (=./Foo=, not =Foo=).
 When ~autoloads init~ carries packages over from an older Julia version,
 developed and git-sourced ones keep their source. ~autoloads up~ updates
 the autoload packages together with the global environment's own, as does a
