@@ -258,13 +258,11 @@ function maintainenvironment!(worker::Worker)
 end
 
 function warnunknown!(reported::Set{String}, cfg::Config, autoload::AbstractDict)
-    unknown = setdiff(keys(cfg.packages), (id.name for id in keys(autoload)))
-    newlyunknown = sort!(collect(setdiff(unknown, reported)))
+    newlyunknown = sort!(collect(setdiff(keys(cfg.packages), (id.name for id in keys(autoload)), reported)))
     isempty(newlyunknown) ||
         @warn "Autoloads has settings for packages it does not autoload here: $(join(newlyunknown, ", ")). \
                Check the `packages` names in [preferences.Autoloads], or add them with `pkg> autoloads add`."
-    empty!(reported)
-    union!(reported, unknown)
+    union!(reported, newlyunknown)
 end
 
 function readconfig!(worker::Worker)

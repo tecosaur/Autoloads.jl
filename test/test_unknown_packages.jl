@@ -19,7 +19,10 @@ const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
     @test contains(only(warned(reported, autoload("X"))), "does not autoload here: Nope, Other.")
     @test isempty(warned(reported, autoload("X")))
     @test isempty(warned(reported, autoload("X", "Nope", "Other")))
-    @test contains(only(warned(reported, autoload("Other"))), "here: Nope, X.")
+    @test contains(only(warned(reported, autoload("Other"))), "here: X.")
+    # As when switching back and forth between projects.
+    @test isempty(warned(reported, autoload("X")))
+    @test isempty(warned(reported, autoload("Other")))
 end
 
 end
