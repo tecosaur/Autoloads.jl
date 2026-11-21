@@ -48,9 +48,12 @@ end
     @test context("ünï.α", "α") == ("α", :ünï)
     @test context("@bt", "@bt") == ("@bt", nothing)
     @test context("\"a \$(DataFr", "DataFr") == ("DataFr", nothing)
+    @test context("using A; DataFr", "DataFr") == ("DataFr", nothing)
+    @test context("f(a,\n  DataFr", "DataFr") == ("DataFr", nothing)
     for (full, prefix) in [("A.DataFrames.gr", "gr"), ("x + ", ""), ("using DataFr", "DataFr"),
                            ("1\n import Foo, DataFr", "DataFr"), ("\"DataFr", "DataFr"), ("d[\"DataFr", "DataFr"),
-                           ("`ls DataFr", "DataFr"), ("x = 1\n\"DataFr", "DataFr")]
+                           ("`ls DataFr", "DataFr"), ("x = 1\n\"DataFr", "DataFr"), ("x = 1; using DataFr", "DataFr"),
+                           ("using A,\n  DataFr", "DataFr"), ("import A: b,\n  c,\n  DataFr", "DataFr")]
         @test context(full, prefix) === nothing
     end
 end

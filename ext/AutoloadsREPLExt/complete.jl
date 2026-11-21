@@ -38,8 +38,10 @@ function completioncontext(full::String, region::Pair{Int, Int})
     bytes = codeunits(full)
     prefix = String(bytes[region.first+1:region.second])
     before = String(bytes[1:region.first])
-    line = before[something(findlast('\n', before), 0)+1:end]
-    first(split(lstrip(line), !Base.is_id_char; limit = 2)) in ("using", "import") && return nothing
+    # The statement so far, which a `using A,` line continues onto the next.
+    lines = split(last(split(before, ';')), '\n')
+    start = findlast(i -> i == 1 || !endswith(rstrip(lines[i-1]), ','), eachindex(lines))
+    first(split(lstrip(lines[start]), !Base.is_id_char; limit = 2)) in ("using", "import") && return nothing
     Base.incomplete_tag(Base.parse_input_line(before; depwarn = false)) in (:string, :char, :cmd, :comment) &&
         return nothing
     isnameprefix = Base.isidentifier(chopprefix(prefix, "@"))

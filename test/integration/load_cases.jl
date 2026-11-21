@@ -107,8 +107,8 @@ elseif GROUP == "project"
     @testset "active project provides FixtureA v0.2.0" begin
         @testset "a dependency not yet loaded is checked too" begin
             loaded, logs = loggedload!(Ext.LoadState(), LoadRequest(FIXTURE_B, :fb, nothing))
-            @test !loaded && warnedonce(logs, ==("Not autoloading FixtureB: FixtureA v0.2.0 \
-                (from $(Base.contractuser(Base.active_project()))) differs from v0.1.0 in the autoloads environment. \
+            @test !loaded && warnedonce(logs, ==("Cannot load FixtureB from the autoloads environment: FixtureA v0.2.0 \
+                (from $(Base.contractuser(Base.active_project()))) differs from v0.1.0 there. \
                 Add FixtureB to the active project to load it there."))
             @test !haskey(Base.loaded_modules, FIXTURE_A)
         end
@@ -117,8 +117,8 @@ elseif GROUP == "project"
         @test startswith(pathof(Main.FixtureA), dirname(Base.active_project()))
         @test pkgversion(Main.FixtureA) == v"0.2.0"
         loaded, logs = loggedload!(state, LoadRequest(FIXTURE_B, :fb, nothing))
-        conflict = "Not autoloading FixtureB: FixtureA v0.2.0 (already loaded) differs from v0.1.0 \
-            in the autoloads environment. Add FixtureB to the active project to load it there."
+        conflict = "Cannot load FixtureB from the autoloads environment: FixtureA v0.2.0 (already loaded) differs from \
+            v0.1.0 there. Add FixtureB to the active project to load it there."
         @test !loaded && warnedonce(logs, ==(conflict))
         @testset "an explicit member using is guarded too" begin
             err = try Ext.evalwithmember(:(using FixtureB), MEMBER) catch e; e end

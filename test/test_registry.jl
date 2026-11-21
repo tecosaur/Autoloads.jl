@@ -59,6 +59,9 @@ end
     @test namesat(from(v"1.13", older, near, newer), ID_X, v"1.0.0") == near
     @test namesat(from(v"1.13", older, newer), ID_X, v"1.0.0") == older
     @test namesat(from(v"1.13", newer), ID_X, v"1.0.0") == newer
+    major = namesfor(ID_X, ["1.0.0"], [:major]; julia = v"2.0")
+    pastmajor = namesfor(ID_X, ["1.0.0"], [:pastmajor]; julia = v"2.1")
+    @test namesat(from(v"1.13", pastmajor, major), ID_X, v"1.0.0") == major
     @test namesat(from(v"1.13", near), ID_X, v"2.0.0") === nothing
     @test providers(from(v"1.13", older, newer), :old) == [(ID_X, true)]
     # This minor's records come first, whatever the version.

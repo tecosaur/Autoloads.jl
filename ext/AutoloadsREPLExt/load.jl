@@ -100,7 +100,7 @@ function checkversions(id::Base.PkgId, member::AbstractString)
             push!(conflicts, "$(graph.names[uuid]) v$actual ($source) differs from v$wanted")
     end
     isempty(conflicts) && return
-    error("Not autoloading $(id.name): $(join(sort!(conflicts), ", ")) in the autoloads environment. ",
+    error("Cannot load $(id.name) from the autoloads environment: $(join(sort!(conflicts), ", ")) there. ",
           "Add $(id.name) to the active project to load it there.")
 end
 

@@ -215,7 +215,7 @@ function bestnames(records::Vector{CatalogRecord}, version::Union{VersionNumber,
             # Higher is better: this minor, then older ones nearest first, then newer; then the newest version.
             (; major, minor) = seen = sighting.julia
             isolder = seen <= julia
-            rank = (isolder, if isolder; (major, minor) else (-major, -minor) end, versionorder(sighting.version))
+            rank = (isolder, if isolder; (Int(major), Int(minor)) else (-Int(major), -Int(minor)) end, versionorder(sighting.version))
             if bestrank === nothing || rank > bestrank
                 best, bestrank = record, rank
             end
