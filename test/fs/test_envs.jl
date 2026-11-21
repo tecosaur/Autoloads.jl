@@ -155,6 +155,11 @@ end
     try
         notifyenvchange()
         @test calls[] == 1
+        # As when the REPL extension loads during a `pkg>` command.
+        world = Base.get_world_counter()
+        ENV_CHANGED[] = @eval () -> $calls[] += 1
+        Base.invoke_in_world(world, notifyenvchange)
+        @test calls[] == 2
     finally
         ENV_CHANGED[] = nothing
     end

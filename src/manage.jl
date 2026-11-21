@@ -361,4 +361,5 @@ function juliacmd(args::Cmd; project::AbstractString, env = (), nice::Bool = fal
     if detach Base.detach(cmd) else cmd end
 end
 
-notifyenvchange() = ENV_CHANGED[] === nothing || ENV_CHANGED[]()
+# The hook may be newer than the caller, as when the REPL extension loads during a `pkg>` command.
+notifyenvchange() = ENV_CHANGED[] === nothing || Base.invokelatest(ENV_CHANGED[])
