@@ -21,7 +21,7 @@ failurefor(id, version; julia = JULIA_MINOR) = PkgFailure(id, Sighting[(; versio
 # Neither stdlibs nor the project autoload unless a test asks.
 cfgof(; kwargs...) = parseconfig(Dict{String, Any}("stdlib" => false, "project" => false,
                                                      (string(k) => v for (k, v) in kwargs)...))
-nograph = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}())
+nograph = ManifestGraph()
 graphof(pairs...) = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(id.uuid => v for (id, v) in pairs),
                                    Dict{Base.UUID, Vector{Base.UUID}}())
 registryof(records, autoload, cfg = cfgof()) = buildregistry(buildcatalog(records), autoload, cfg)

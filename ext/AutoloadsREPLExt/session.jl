@@ -8,14 +8,6 @@ const MISSING_FILE_STAMP = (0.0, Int64(0), UInt64(0))
 const STOP_WAIT_S = 2.0
 const FIRST_REFRESH_WAIT_S = 2.0
 
-struct Session
-    catalog::Catalog
-    registry::Registry
-    config::Config
-    member::String
-    memberdeps::Set{String}
-end
-
 # Written only by the worker.
 mutable struct SessionRef
     @atomic session::Union{Session, Nothing}
@@ -77,9 +69,9 @@ const SESSION = SessionRef(nothing)
 const LOAD = LoadState()
 const RUNTIME = Ref{Union{Runtime, Nothing}}(nothing)
 
-function startsession!(; member::AbstractString = memberdir(), catalog::AbstractString = catalogpath())
+function startsession!()
     RUNTIME[] === nothing || return RUNTIME[]
-    runtime = Runtime(Channel{Event}(Inf), member, catalog)
+    runtime = Runtime(Channel{Event}(Inf), memberdir(), catalogpath())
     events = runtime.events
     RUNTIME[] = runtime
     push!(Base.package_callbacks, ObserveLoad(events))
@@ -152,9 +144,9 @@ end
 
 function handlebatch!(worker::Worker, batch::Vector{Event})
     observed = unique(event.id for event in batch if event isa Observed)
-    haswritten = try
+    haswritten = !isempty(observed) && try
         written = observe!(worker, observed)
-        isempty(observed) || empty!(worker.observationerrors)
+        empty!(worker.observationerrors)
         written
     catch err
         isunreported!(worker.observationerrors, err) &&
@@ -202,26 +194,23 @@ end
 function derivesession(worker::Worker)
     cfg = readconfig!(worker)
     cfg === nothing && return nothing, nothing
-    member = worker.runtime.member
-    memberproject = joinpath(member, "Project.toml")
-    active = Base.active_project()
-    memberenv, projectenv = environment(memberproject), environment(active)
-    selected = [id for id in projectenv.deps if isselected(cfg, id.name)]
-    hasmember = isfile(memberproject)
-    hasmember || !isempty(selected) || return nothing, nothing
-    autoload = autoloadset(memberenv.deps, memberenv.graph, projectenv.deps, projectenv.graph,
-                            worker.stdlibs, [record.id for record in worker.builtins], cfg)
-    warnunknown!(worker.unknownpackages, cfg, autoload)
+    (; member, catalogpath) = worker.runtime
     records = try
-        readhealedcatalog(worker.runtime.catalogpath)
+        readhealedcatalog(catalogpath)
     catch err
         err isa CatalogTooNew || rethrow()
         @warn "Autoloads is off" exception = err maxlog = 1
         return nothing, nothing
     end
-    catalog = buildcatalog(append!(convert(Vector{CatalogRecord}, worker.builtins), records))
-    session = Session(catalog, buildregistry(catalog, autoload, cfg), cfg, member,
-                      Set(id.name for id in memberenv.deps))
+    session = Session(cfg, member, records, worker.builtins, worker.stdlibs)
+    (; memberenv, active, projectenv) = session
+    (; project) = cfg
+    selected = [id for id in projectenv.deps if project === nothing || id.name in project]
+    hasmember = isfile(joinpath(member, "Project.toml"))
+    hasmember || !isempty(selected) || return nothing, nothing
+    warnunknown!(worker.unknownpackages, cfg, session.autoload)
+    wantedversions(graph, ids) =
+        Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => get(graph.versions, id.uuid, nothing) for id in ids)
     # Stdlibs are always indexed, for hints. Without a member, a session implies an active project.
     plan = [if hasmember member else dirname(active::String) end =>
                 wantedversions(memberenv.graph, [memberenv.deps; worker.stdlibs])]
@@ -330,8 +319,10 @@ awaitfirstrefresh(runtime::Runtime, timeout_s = FIRST_REFRESH_WAIT_S) =
     timedwait(() -> (@atomic runtime.hasrefreshed), timeout_s; pollint = 0.005)
 
 function transformstatements(session::Session, ex)
-    memberonly(root::Symbol) =
-        String(root) in session.memberdeps && Base.identify_package(String(root)) === nothing
+    function memberonly(root::Symbol)
+        name = String(root)
+        any(id -> id.name == name, session.memberenv.deps) && Base.identify_package(name) === nothing
+    end
     mapstatements(ex) do stmt
         iscandidatestatement(session.registry, stmt, memberonly) || return stmt
         anyunquoted(node -> ismemberonlyimport(node, memberonly), stmt) &&
@@ -356,9 +347,6 @@ function isunreported!(reported::Set{String}, err)
     true
 end
 
-wantedversions(graph::ManifestGraph, ids) =
-    Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => get(graph.versions, id.uuid, nothing) for id in ids)
-
 manifestof(::Nothing) = nothing
 manifestof(projectfile::String) = if isfile(projectfile) Base.project_file_manifest_path(projectfile) end
 
@@ -370,7 +358,7 @@ preferencefiles(projectfile::String) =
 filestamp(::Nothing) = MISSING_FILE_STAMP
 
 # A missing file's `stat` is all zeros: `MISSING_FILE_STAMP`.
-function filestamp(path::String)
+function filestamp(path::AbstractString)
     st = stat(path)
     (Float64(st.mtime), Int64(st.size), UInt64(st.inode))
 end

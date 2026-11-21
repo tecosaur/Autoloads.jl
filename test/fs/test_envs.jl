@@ -3,7 +3,7 @@
 
 using Test
 using Autoloads: memberdir, catalogpath, statedir, projectdeps, manifestgraph, environment, dependencyclosure,
-    stdlibids, builtinrecords, runjulia, notifyenvchange, ENV_CHANGED, loadconfig,
+    stdlibids, builtinrecords, juliacmd, notifyenvchange, ENV_CHANGED, loadconfig,
     Config
 
 const UUID_PKG = Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f")
@@ -139,15 +139,12 @@ end
     @test any(r -> Symbol("@spawn") in r.exported, builtinrecords())
 end
 
-@testset "run_julia" begin
-    out = IOBuffer()
-    wait(runjulia(`-e 'print(VERSION)'`; project = nothing, output = out))
-    @test String(take!(out)) == string(VERSION)
+@testset "juliacmd" begin
     mktempdir() do dir
         writefile(joinpath(dir, "Project.toml"), "")
-        wait(runjulia(`-e 'print(basename(dirname(Base.active_project())))'`;
-                       project = dir, env = ("AUTOLOADS_X" => "1",), nice = true, output = out))
-        @test String(take!(out)) == basename(dir)
+        script = `-e 'print(VERSION, " ", basename(dirname(Base.active_project())), " ", ENV["AUTOLOADS_X"])'`
+        @test read(juliacmd(script; project = dir, env = ("AUTOLOADS_X" => "1",), nice = true), String) ==
+            "$VERSION $(basename(dir)) 1"
     end
 end
 
@@ -195,13 +192,9 @@ end
             """)
         script = "using Autoloads; c = Autoloads.loadconfig(); " *
             "print(c.stdlib, ' ', join(sort!(collect(keys(c.packages))), ','))"
-        facts(active) = begin
-            out = IOBuffer()
-            sep = Sys.iswindows() ? ";" : ":"
-            loadpath = join([active, globalproject, "@stdlib"], sep)
-            wait(runjulia(`-e $script`; project = active, output = out,
-                           env = ("JULIA_LOAD_PATH" => loadpath,)))
-            String(take!(out))
+        function facts(active)
+            loadpath = join([active, globalproject, "@stdlib"], if Sys.iswindows() ';' else ':' end)
+            read(juliacmd(`-e $script`; project = active, env = ("JULIA_LOAD_PATH" => loadpath,)), String)
         end
         @test facts(withextras) == "true X"
         @test facts(withoutextras) == "true "

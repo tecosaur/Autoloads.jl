@@ -192,7 +192,7 @@ catalognames(uuid, name, version, exported...; julia = JULIA_MINOR) =
                 include($(repr(joinpath(src, "catalogfile.jl"))))
                 worker, path = parse(Int, ARGS[1]), ARGS[2]
                 for k in 1:100
-                    uuid = iseven(k) ? Base.UUID(UInt128(worker * 1000 + k)) : Base.UUID(UInt128(k % 5 + 1))
+                    uuid = Base.UUID(UInt128(if iseven(k) worker * 1000 + k else k % 5 + 1 end))
                     version = VersionNumber(worker, k)
                     names = Set([Symbol("n_", worker, "_", k)])
                     at = Sighting[(; version, julia = JULIA_MINOR)]
@@ -206,7 +206,7 @@ catalognames(uuid, name, version, exported...; julia = JULIA_MINOR) =
             @test all(success, procs)
             records = readcatalog(path)
             for worker in 1:2, k in 1:100
-                uuid = iseven(k) ? Base.UUID(UInt128(worker * 1000 + k)) : Base.UUID(UInt128(k % 5 + 1))
+                uuid = Base.UUID(UInt128(if iseven(k) worker * 1000 + k else k % 5 + 1 end))
                 name = Symbol("n_", worker, "_", k)
                 @test any(r -> r.id.uuid == uuid && any(s -> s.version == VersionNumber(worker, k), r.at) &&
                                r.exported == Set([name]), records)

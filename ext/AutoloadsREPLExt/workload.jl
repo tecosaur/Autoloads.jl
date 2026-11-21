@@ -11,8 +11,10 @@ try
         records = CatalogRecord[PkgNames(id, at, Set([:Workload, :wl, Symbol("@wl")]), Set([:wp]), Set{Symbol}())]
         catalog = buildcatalog(records)
         cfg = parseconfig(Dict{String, Any}())
-        reg = buildregistry(catalog, Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0"), cfg)
-        session = Session(catalog, reg, cfg, "", Set{String}())
+        autoload = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0")
+        reg = buildregistry(catalog, autoload, cfg)
+        env = (; deps = [id], graph = ManifestGraph())
+        session = Session(cfg, "", env, nothing, env, catalog, autoload, reg)
         input = REPL.softscope(Base.parse_input_line("x = 1; y = [wl(x), Workload.wp(2)]; @wl f(z) = wl(z); wl"))
         transformstatements(session, input)
         for stmt in input.args[end].args

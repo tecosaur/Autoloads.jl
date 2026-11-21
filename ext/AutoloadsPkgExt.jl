@@ -7,8 +7,8 @@
 module AutoloadsPkgExt
 
 using Autoloads, Pkg, StyledStrings
-using Autoloads: PkgFailure, ManifestGraph, ConfigError, namesat, failedat, autoloadnames, isselected,
-    packageconfig, owner
+using Autoloads: PkgFailure, ManifestGraph, ConfigError, Session, namesat, failedat, autoloadnames, packageconfig,
+    owner
 
 # The face of each kind of name (`Autoloads.NAME_KINDS`, and `@` for macros), in the order About.jl lists them.
 const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funcall, ':' => :julia_type,
@@ -17,14 +17,14 @@ const KIND_FACES = ['.' => :bright_red, '@' => :julia_macro, '+' => :julia_funca
 # `nothing` without a REPL mode; then every use below fails soft.
 const REPLMode = if isdefined(Pkg, :REPLMode) Pkg.REPLMode end
 
-function completeautoloads(options, partial, offset, index; kwargs...)
-    autoloads = try
-        Autoloads.readautoloads(Autoloads.globalenvdir(), Autoloads.catalogpath())
+function completeautoloads(_...; kwargs...)
+    session = try
+        Autoloads.readsession(Autoloads.globalenvdir(), Autoloads.catalogpath())
     catch err
         err isa ConfigError || rethrow()
         return String[]
     end
-    sort!([id.name for id in keys(autoloads.autoload)])
+    sort!([id.name for id in keys(session.autoload)])
 end
 
 # Built when precompiling, against the Pkg it is loaded with (a different Pkg
@@ -144,16 +144,17 @@ function wrappkgcommands!()
     end
 end
 
-function Autoloads.printstatus(@nospecialize(io::IO), autoloads::NamedTuple)
-    (; cfg, member, memberenv, active, projectenv, registry) = autoloads
+function Autoloads.printstatus(@nospecialize(io::IO), session::Session)
+    (; config, member, memberenv, active, projectenv, registry) = session
     print(io, styled"{bold:Global autoloads}  {shadow:$(Base.contractuser(member))}")
     isfile(joinpath(member, "Project.toml")) ||
         print(io, styled"  {warning:(missing; create it with `pkg> autoloads init`)}")
     println(io)
-    printpackages(io, autoloads, memberenv.deps, memberenv.graph)
+    printpackages(io, session, memberenv.deps, memberenv.graph)
     println(io, styled"\n{bold:Project autoloads}  {shadow:$(Base.contractuser(something(active, \"\")))}")
-    printpackages(io, autoloads, [id for id in projectenv.deps if isselected(cfg, id.name)],
-                   projectenv.graph)
+    (; project) = config
+    selected = [id for id in projectenv.deps if project === nothing || id.name in project]
+    printpackages(io, session, selected, projectenv.graph)
     for (title, note, claims) in (("Shared names", "autoloaded once one of their packages is loaded", registry.shared),
                                   ("Ambiguous names", "not autoloaded", registry.ambiguous))
         isempty(claims) && continue
@@ -167,27 +168,27 @@ function Autoloads.printstatus(@nospecialize(io::IO), autoloads::NamedTuple)
             printwrapped(io, sort!(names; by = lowercase))
         end
     end
-    println(io, styled"\n{bold:Precompile policy}  $(lowercase(string(cfg.policy)))")
+    println(io, styled"\n{bold:Precompile policy}  $(lowercase(string(config.policy)))")
 end
 
-function Autoloads.printstatus(@nospecialize(io::IO), autoloads::NamedTuple, pkgs::AbstractString...)
-    ids = Dict(id.name => id for id in keys(autoloads.autoload))
+function Autoloads.printstatus(@nospecialize(io::IO), session::Session, pkgs::AbstractString...)
+    ids = Dict(id.name => id for id in keys(session.autoload))
     for pkg in pkgs
         haskey(ids, pkg) || throw(ArgumentError("Autoloads.status: $pkg is not an autoload package here. \
             `pkg> autoloads st` lists them; `pkg> autoloads add $pkg` adds it."))
     end
     for (i, pkg) in enumerate(pkgs)
         i == 1 || println(io)
-        printpackage(io, autoloads, ids[pkg])
+        printpackage(io, session, ids[pkg])
     end
 end
 
-function printpackage(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.PkgId)
-    (; cfg, cat, autoload, registry) = autoloads
+function printpackage(@nospecialize(io::IO), session::Session, id::Base.PkgId)
+    (; config, catalog, autoload, registry) = session
     version = autoload[id]
-    glyph, state = indexcells(indexstate(autoloads, id, version), (0, 0))
+    glyph, state = indexcells(indexstate(session, id, version), (0, 0))
     println(io, glyph, styled" {bold:$(id.name)}", if version === nothing "" else styled" {shadow:v$version}" end, "  ", state)
-    record = namesat(cat, id, version)
+    record = namesat(catalog, id, version)
     record === nothing && return
     kind(name) = if startswith(String(name), '@') '@' else get(record.kinds, name, '?') end
     rank(name) = something(findfirst(==(kind(name)) ∘ first, KIND_FACES), length(KIND_FACES) + 1)
@@ -196,7 +197,7 @@ function printpackage(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.Pkg
         face = last(get(KIND_FACES, rank(name), '?' => :default))
         styled"{code,$face:$name}"
     end
-    offered = bykind(autoloadnames(record, packageconfig(cfg, id.name)))
+    offered = bykind(autoloadnames(record, packageconfig(config, id.name)))
     function printnames(title, note, names)
         isempty(names) && return
         println(io, styled"\n  {bold:$title} ($(length(names)))", if isempty(note) "" else styled"  {shadow:$note}" end)
@@ -216,11 +217,11 @@ function printpackage(@nospecialize(io::IO), autoloads::NamedTuple, id::Base.Pkg
     printnames("Public", "not autoloaded", map(shown, bykind(record.public)))
 end
 
-function printpackages(@nospecialize(io::IO), autoloads::NamedTuple, ids::Vector{Base.PkgId}, graph::ManifestGraph)
+function printpackages(@nospecialize(io::IO), session::Session, ids::Vector{Base.PkgId}, graph::ManifestGraph)
     isempty(ids) && return println(io, styled"  {shadow:(none)}")
     rows = map(sort(ids; by = id -> id.name)) do id
         version = get(graph.versions, id.uuid, nothing)
-        (id.name, if version === nothing "" else "v$version" end, indexstate(autoloads, id, version))
+        (id.name, if version === nothing "" else "v$version" end, indexstate(session, id, version))
     end
     namewidth, versionwidth = maximum(textwidth ∘ first, rows), maximum(row -> textwidth(row[2]), rows)
     counts = [state for (_, _, state) in rows if state isa NTuple{2, Int}]
@@ -236,7 +237,7 @@ function printwrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     line = "   "
     for (i, name) in enumerate(names)
         entry = if i < length(names) name * "," else name end
-        if textwidth(line) + 1 + textwidth(entry) > displaysize(io)[2] && line != "   "
+        if i > 1 && textwidth(line) + 1 + textwidth(entry) > displaysize(io)[2]
             println(io, line)
             line = "   "
         end
@@ -245,10 +246,10 @@ function printwrapped(@nospecialize(io::IO), names::Vector{<:AbstractString})
     println(io, line)
 end
 
-function indexstate((; cat, cfg)::NamedTuple, id::Base.PkgId, version::Union{VersionNumber, Nothing})
-    record = namesat(cat, id, version)
-    record === nothing && return failedat(cat, id, version)
-    (length(autoloadnames(record, packageconfig(cfg, id.name))), length(record.public))
+function indexstate((; catalog, config)::Session, id::Base.PkgId, version::Union{VersionNumber, Nothing})
+    record = namesat(catalog, id, version)
+    record === nothing && return failedat(catalog, id, version)
+    (length(autoloadnames(record, packageconfig(config, id.name))), length(record.public))
 end
 
 indexcells(::Nothing, widths) = styled"{warning:○}", styled"{warning:not indexed}"
@@ -257,9 +258,9 @@ indexcells(failure::PkgFailure, widths) =
 
 function indexcells((exports, public)::NTuple{2, Int}, (exportswidth, publicwidth))
     noun = if exports == 1 "export" else "exports" end
-    counts = styled"{blue:$(lpad(exports, exportswidth))} $noun"
-    styled"{success:✓}", if public == 0 counts else
-        counts * rpad(",", 9 - length(noun)) * styled"{magenta:$(lpad(public, publicwidth))} public"
+    counts = styled"{blue:$(lpad(exports, exportswidth))} "
+    styled"{success:✓}", if public == 0 counts * noun else
+        counts * rpad(noun * ",", length("exports, ")) * styled"{magenta:$(lpad(public, publicwidth))} public"
     end
 end
 
@@ -288,9 +289,9 @@ end
 # Precompile workload: an empty global environment, but the user's settings and active project.
 if ccall(:jl_generating_output, Cint, ()) == 1
     try
-        autoloads = Autoloads.readautoloads(mktempdir(), joinpath(mktempdir(), "catalog"))
-        Autoloads.printstatus(devnull, autoloads)
-        foreach(id -> Autoloads.printstatus(devnull, autoloads, id.name), first(keys(autoloads.autoload), 1))
+        session = Autoloads.readsession(mktempdir(), joinpath(mktempdir(), "catalog"))
+        Autoloads.printstatus(devnull, session)
+        foreach(id -> Autoloads.printstatus(devnull, session, id.name), first(keys(session.autoload), 1))
         completeautoloads(nothing, "", 1, 1)
     catch err
         err isa ConfigError || rethrow()

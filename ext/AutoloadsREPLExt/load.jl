@@ -23,16 +23,18 @@ function load!(state::LoadState, req::LoadRequest, member::AbstractString; annou
     key = (req.id, req.name)
     req.id in state.failed && return (push!(state.attempted, key); false)
     announce && @info "Autoloading $(req.id.name) (for $(req.trigger))"
+    path = Expr(:., Symbol.(split(req.id.name, '.'))...)
+    usingstmt = Expr(:using, if req.name === nothing path else Expr(:(:), path, Expr(:., req.name)) end)
     loaded = try
         if req.id.uuid === nothing || Base.identify_package(req.id.name) == req.id
-            Core.eval(Main, usingexpr(req))
+            Core.eval(Main, usingstmt)
         else
             checkversions(req.id, member)
             withmember(member) do
                 Base.locate_package(req.id) === nothing &&
                     error("$(req.id.name) is not installed in the autoloads environment; ",
                           "run `pkg> instantiate` with the global environment active to install it")
-                Core.eval(Main, usingexpr(req))
+                Core.eval(Main, usingstmt)
             end
         end
         true
@@ -77,11 +79,6 @@ end
 # A Ctrl-C during a package's `__init__` or top level arrives wrapped.
 isinterrupt(err) = err isa InterruptException ||
     (err isa Union{Base.InitError, LoadError} && isinterrupt(err.error))
-
-function usingexpr(req::LoadRequest)
-    path = Expr(:., Symbol.(split(req.id.name, '.'))...)
-    Expr(:using, if req.name === nothing path else Expr(:(:), path, Expr(:., req.name)) end)
-end
 
 function checkversions(id::Base.PkgId, member::AbstractString)
     graph = manifestgraph(joinpath(member, "Project.toml"))

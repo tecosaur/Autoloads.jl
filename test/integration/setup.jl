@@ -5,10 +5,10 @@
 # environment has the `autoloads` member, with the fixtures developed into it.
 # Included (not auto-run) by the integration test files.
 
-using Autoloads: runjulia
-
 # Keeps the default catalog, here and in subprocesses, out of the user's state directory.
 ENV["XDG_STATE_HOME"] = mktempdir()
+
+const PATH_SEPARATOR = if Sys.iswindows() ';' else ':' end
 
 const FIXTURES_DIR = joinpath(dirname(@__DIR__), "fixtures")
 const FIXTURE_A = Base.PkgId(Base.UUID("a0a0a0a0-1111-4111-8111-00000000000a"), "FixtureA")
@@ -30,7 +30,7 @@ Raises `ErrorException` with the Pkg output if developing the fixtures fails.
 """
 function buildworkspace(; fixtures = (FIXTURE_A, FIXTURE_B, FIXTURE_C))
     depot = mktempdir()
-    depotpath = join([depot; DEPOT_PATH], Sys.iswindows() ? ';' : ':')
+    depotpath = join([depot; DEPOT_PATH], PATH_SEPARATOR)
     globalenv = joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)")
     member = joinpath(globalenv, "autoloads")
     mkpath(member)
@@ -48,4 +48,11 @@ function buildworkspace(; fixtures = (FIXTURE_A, FIXTURE_B, FIXTURE_C))
         error("Developing the fixtures into $member failed (exit code $(process.exitcode)):\n",
               String(take!(output)))
     (; depot, depotpath, globalenv, member)
+end
+
+"Start Julia on `args`, printing to `output`, in `project` or else the default environment."
+function runjulia(args::Cmd; project = nothing, output::IO, env = ())
+    projectflag = if project === nothing; `` else `--project=$project` end
+    cmd = addenv(`$(Base.julia_cmd()) --startup-file=no --history-file=no $projectflag $args`, env...)
+    run(pipeline(cmd; stdout = output, stderr = output); wait = false)
 end

@@ -53,6 +53,14 @@ owned by `Base` or `Core` are skipped unless `mod` is part of `Base`, as are
 undefined bindings and names containing whitespace.
 """
 function extractnames(mod::Module, id::Base.PkgId = Base.PkgId(mod))
+    function iswithin(inner::Module, ancestor::Module)
+        while inner !== ancestor
+            parent = parentmodule(inner)
+            parent === inner && return false
+            inner = parent
+        end
+        true
+    end
     isbuiltin = iswithin(mod, Base)
     exported = Set{Symbol}((nameof(mod),))
     public = Set{Symbol}()
@@ -226,15 +234,6 @@ function parsejuliaranges(text::AbstractString)
         append!(minors, VersionNumber(major, minor) for minor in from:to)
     end
     minors
-end
-
-function iswithin(mod::Module, ancestor::Module)
-    while mod !== ancestor
-        parent = parentmodule(mod)
-        parent === mod && return false
-        mod = parent
-    end
-    true
 end
 
 function idfields(id::Base.PkgId)

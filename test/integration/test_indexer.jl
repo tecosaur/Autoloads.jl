@@ -48,7 +48,7 @@ wanted(ids) = Pair{Base.PkgId, Union{VersionNumber, Nothing}}[id => GRAPH.versio
 recordsof(path, id) = filter(r -> r.id == id, readcatalog(path))
 namesof(path, id) = only(filter(r -> r isa PkgNames, recordsof(path, id)))
 failureof(path, id) = only(filter(r -> r isa PkgFailure, recordsof(path, id)))
-logof(path) = isfile(path * ".log") ? read(path * ".log", String) : ""
+logof(path) = if isfile(path * ".log") read(path * ".log", String) else "" end
 
 "Start indexing `ids` into a fresh catalog; returns the catalog path and a channel receiving `changed`."
 function startrun(ix, policy, ids; env = (), path = joinpath(mktempdir(), "catalog"))
@@ -125,7 +125,7 @@ end
         # The indexing lock holds the subprocess's pid.
         pid = parse(Int, first(split(read(pending.path * Autoloads.INDEXING_LOCK_SUFFIX, String))))
         # Julia 1.12 segfaults on SIGINT with `exit_on_sigint(false)`, which then counts as a crash.
-        signal = VERSION >= v"1.13" ? "INT" : "TERM"
+        signal = if VERSION >= v"1.13" "INT" else "TERM" end
         run(`kill -$signal $pid`)
         (; path, changed) = finishrun(pending)
         @test !changed
@@ -145,7 +145,7 @@ end
         end
         results = Channel{Any}(2)
         @test start([FIXTURE_A], _ -> put!(results, start([FIXTURE_C], _ -> put!(results, :second_done))))
-        nextresult() = timedwait(() -> isready(results), INDEXER_WAIT_S) === :ok ? take!(results) : :timedout
+        nextresult() = if timedwait(() -> isready(results), INDEXER_WAIT_S) === :ok take!(results) else :timedout end
         restarted = nextresult()
         @test restarted === true
         restarted === true && @test nextresult() === :second_done

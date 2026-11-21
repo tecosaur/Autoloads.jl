@@ -25,7 +25,7 @@ const FIXTURE_MISSING = Base.PkgId(Base.UUID("d0d0d0d0-4444-4444-8444-0000000000
 function loggedload!(state, req; kwargs...)
     logs, loaded = Test.collect_test_logs(() -> Ext.load!(state, req, MEMBER; kwargs...))
     @test LOAD_PATH == DEFAULT_LOAD_PATH
-    exceptiontext(log) = haskey(log.kwargs, :exception) ? sprint(showerror, first(log.kwargs[:exception])) : ""
+    exceptiontext(log) = if haskey(log.kwargs, :exception) sprint(showerror, first(log.kwargs[:exception])) else "" end
     loaded, [(log.level, log.message, exceptiontext(log)) for log in logs]
 end
 

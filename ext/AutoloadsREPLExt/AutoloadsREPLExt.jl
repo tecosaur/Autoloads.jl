@@ -11,7 +11,7 @@ using Autoloads: Registry, LoadRequest, iscandidate, manifestgraph, dependencycl
     projectdeps, environment
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, Sighting, PrecompilePolicy, Lazy, Background,
     juliacmd, writecatalog!, CatalogTooNew, INTERRUPTED_EXIT_CODE, INDEXING_LOCK_SUFFIX, JULIA_MINOR
-using Autoloads: Catalog, Config, ConfigError, ManifestGraph, buildcatalog, buildregistry, autoloadset, isselected,
+using Autoloads: Catalog, Config, ConfigError, ManifestGraph, Session, buildcatalog, buildregistry,
     pendingloads, unindexed, owner, namesat, readcatalog, readhealedcatalog,
     extractnames, stdlibids, builtinrecords, memberdir, catalogpath, statedir, loadconfig, parseconfig
 

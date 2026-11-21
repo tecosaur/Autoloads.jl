@@ -9,6 +9,8 @@ const SCRIPTS_DIR = joinpath(@__DIR__, "scripts")
 # In a version's `statedir`: one `resolve`, or `update [pkg ...]`, per line.
 const DEFERRED_FILE = "deferred"
 const PKG_ID = Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg")
+# Set by the REPL extension to request a refresh.
+const ENV_CHANGED = Ref{Any}(nothing)
 
 """
     init(; carryover::Union{Bool, Symbol} = :ask)
@@ -20,13 +22,13 @@ re-serialises the global Project.toml, keeping its content but (as Pkg's own
 writes do) not its comments or layout. If resolving fails, the global
 Project.toml is restored and the new member removed.
 
-When the member is created and the global environment of an older Julia
-minor version (the newest one) has an autoloads member, `carryover` says
-whether to copy its `[deps]` with their `[compat]` and `[sources]` (developed
-and git-sourced packages keep their source), and the Autoloads preferences
-of that environment's Project.toml and LocalPreferences.toml into each of
-this one's that has none: `true`, `false`, or `:ask` to prompt in
-interactive sessions (otherwise, print how to add them).
+When the member is created and the newest older Julia minor's global
+environment has an autoloads member, `carryover` says whether to carry over
+its packages and the Autoloads settings: `true`, `false`, or `:ask` to prompt
+in interactive sessions (otherwise, print how to add them). Carried packages
+keep their `[compat]` and, for developed and git-sourced ones, their
+`[sources]`. The settings of that environment's Project.toml and
+LocalPreferences.toml go to each of this one's that has none.
 
 Warns if the global environment does not depend on Autoloads.
 
@@ -116,8 +118,12 @@ function remove(pkgs::Vector{String}; allversions::Bool = false)
     isempty(pkgs) && throw(ArgumentError("Autoloads.remove: no packages given"))
     globaldir = globalenvdir()
     member = existingmember(globaldir)
-    names = Set(id.name for id in projectdeps(joinpath(member, "Project.toml")))
-    present = if allversions filter(in(names), pkgs) else pkgs end
+    present = if allversions
+        names = Set(id.name for id in projectdeps(joinpath(member, "Project.toml")))
+        filter(in(names), pkgs)
+    else
+        pkgs
+    end
     isempty(present) || runpkg(:remove, present, present, member)
     allversions && spread!(:remove, globaldir, pkgs)
     notifyenvchange()
@@ -187,18 +193,17 @@ Autoloads.status("Statistics")
 ```
 """
 function status(io::IO = stdout, pkgs::AbstractString...)
-    autoloads = readautoloads(globalenvdir(), catalogpath())
+    session = readsession(globalenvdir(), catalogpath())
     Base.require(PKG_ID)
-    Base.invokelatest(printstatus, io, autoloads, pkgs...)
+    Base.invokelatest(printstatus, io, session, pkgs...)
 end
 
 status(pkg::AbstractString, pkgs::AbstractString...) = status(stdout, pkg, pkgs...)
 
 """
-    printstatus(io, autoloads, pkgs...)
+    printstatus(io, session::Session, pkgs...)
 
-Print the `status` report of `autoloads`, as `readautoloads` gives it. Its
-methods are in the Pkg extension.
+Print the `status` report of `session`. Its methods are in the Pkg extension.
 """
 function printstatus end
 
@@ -331,8 +336,7 @@ runpkg(op::Symbol, pkgs::Vector{String}, args::Vector{String}, project::Abstract
     runpkgscript(op, pkgs, `$(joinpath(SCRIPTS_DIR, "pkg.jl")) $op $args`; project, output)
 
 function runpkgscript(op::Symbol, pkgs::Vector{String}, args::Cmd; project::AbstractString, output::IO = stdout)
-    process = runjulia(args; project, env = PKG_SUBPROCESS_ENV, output)
-    wait(process)
+    process = run(pipeline(ignorestatus(juliacmd(args; project, env = PKG_SUBPROCESS_ENV)); stdout = output, stderr = output))
     @debug "Autoloads Pkg subprocess exited" op pkgs project process.exitcode
     success(process) ||
         error("Autoloads.$op failed", if isempty(pkgs) "" else " for $(join(pkgs, ", "))" end, " in $project: ",
@@ -341,15 +345,10 @@ function runpkgscript(op::Symbol, pkgs::Vector{String}, args::Cmd; project::Abst
     nothing
 end
 
-function readautoloads(globaldir::AbstractString, catalog::AbstractString)
-    cfg = loadconfig()
-    member = memberdir(globaldir)
-    memberenv = environment(joinpath(member, "Project.toml"))
-    active = Base.active_project()
-    projectenv = environment(active)
-    builtins = builtinrecords()
-    cat = buildcatalog([builtins; readcatalog(catalog)])
-    autoload = autoloadset(memberenv.deps, memberenv.graph, projectenv.deps, projectenv.graph,
-                            stdlibids(), [record.id for record in builtins], cfg)
-    (; cfg, member, memberenv, active, projectenv, cat, autoload, registry = buildregistry(cat, autoload, cfg))
+function juliacmd(args::Cmd; project::AbstractString, env = (), nice::Bool = false, detach::Bool = false)
+    niceness = if nice && Sys.which("nice") !== nothing; `nice -n 10` else `` end
+    cmd = addenv(`$niceness $(Base.julia_cmd()) --startup-file=no --history-file=no --project=$project $args`, env...)
+    if detach Base.detach(cmd) else cmd end
 end
+
+notifyenvchange() = ENV_CHANGED[] === nothing || ENV_CHANGED[]()

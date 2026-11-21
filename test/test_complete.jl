@@ -16,8 +16,9 @@ const CATALOG = Autoloads.buildcatalog([
     Autoloads.PkgNames(BENCHMARKTOOLS, AT, Set([:BenchmarkTools, Symbol("@btime")]), Set{Symbol}(), Set{Symbol}()),
     Autoloads.PkgNames(OTHER, AT, Set([:Other, :shared]), Set{Symbol}(), Set{Symbol}())])
 const CONFIG = Autoloads.parseconfig(Dict{String, Any}())
-const REGISTRY = Autoloads.buildregistry(CATALOG,
-    Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0" for id in (DATAFRAMES, BENCHMARKTOOLS, OTHER)), CONFIG)
+const AUTOLOAD = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(id => v"1.0.0" for id in (DATAFRAMES, BENCHMARKTOOLS, OTHER))
+const REGISTRY = Autoloads.buildregistry(CATALOG, AUTOLOAD, CONFIG)
+const NO_ENV = (; deps = Base.PkgId[], graph = Autoloads.ManifestGraph())
 
 complete(prefix, qualifier = nothing; bound = Symbol[]) =
     Ext.completionsfor(REGISTRY, CATALOG, prefix, qualifier, in(bound))
@@ -70,7 +71,7 @@ LineEdit.complete_line(::StubProvider, s::StubState, ::Module; hint::Bool = fals
     wrapper = Ext.CompletionWrapper(stub)
     previous = @atomic Ext.SESSION.session
     try
-        @atomic Ext.SESSION.session = Ext.Session(CATALOG, REGISTRY, CONFIG, "", Set{String}())
+        @atomic Ext.SESSION.session = Autoloads.Session(CONFIG, "", NO_ENV, nothing, NO_ENV, CATALOG, AUTOLOAD, REGISTRY)
         completions, region, shouldcomplete = LineEdit.complete_line(wrapper, StubState("DataFr"), Main)
         @test completions isa Vector{NamedCompletion}
         @test [c.completion for c in completions] == ["Data", "DataFrame", "DataFrames"]

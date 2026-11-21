@@ -26,7 +26,7 @@ function freshglobalenv(project)
     globaldir = joinpath(depot, "environments", ENV_NAME)
     mkpath(globaldir)
     write(joinpath(globaldir, "Project.toml"), project)
-    (; depotpath = join([depot; DEPOT_PATH], Sys.iswindows() ? ';' : ':'), globaldir)
+    (; depotpath = join([depot; DEPOT_PATH], PATH_SEPARATOR), globaldir)
 end
 
 "Write an autoloads member for the sibling environment `name` of `globaldir`."
@@ -39,7 +39,7 @@ end
 "Run `f()` with `depotpath` as the depot path, here and in subprocesses, and Pkg offline."
 function indepot(f, depotpath)
     saved = copy(DEPOT_PATH)
-    copy!(DEPOT_PATH, split(depotpath, Sys.iswindows() ? ';' : ':'))
+    copy!(DEPOT_PATH, split(depotpath, PATH_SEPARATOR))
     try
         withenv(f, "JULIA_DEPOT_PATH" => depotpath, "JULIA_PKG_OFFLINE" => "true",
                 "JULIA_LOAD_PATH" => nothing, "JULIA_PROJECT" => nothing)
@@ -363,8 +363,10 @@ end
     siblingmember(ws.globalenv, "v$(nextversion.major).$(nextversion.minor)",
                    "[deps]\nFixtureC = \"$(FIXTURE_C.uuid)\"\n")
     sibling = joinpath(dirname(ws.globalenv), "v$(nextversion.major).$(nextversion.minor)", "autoloads")
-    deferred(version) = (path = joinpath(Autoloads.statedir(version), Autoloads.DEFERRED_FILE);
-                         isfile(path) ? readlines(path) : String[])
+    function deferred(version)
+        path = joinpath(Autoloads.statedir(version), Autoloads.DEFERRED_FILE)
+        if isfile(path) readlines(path) else String[] end
+    end
     fixturea = joinpath(FIXTURES_DIR, "FixtureA")
     try
         @testset "add and remove edit the other versions now, and defer their resolve" begin

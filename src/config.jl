@@ -61,9 +61,6 @@ end
 
 loadconfig() = parseconfig(Base.get_preferences(Base.PkgId(@__MODULE__).uuid))
 
-"Whether the `project` setting selects the active project's dependency `name`."
-isselected((; project)::Config, name::AbstractString) = project === nothing || name in project
-
 packageconfig(cfg::Config, name::AbstractString) =
     get(cfg.packages, String(name), PackageConfig(Set{Symbol}(), nothing, nothing))
 
@@ -98,7 +95,7 @@ function parsebool(dict::Dict{String, Any}, key::String, default::Bool)
     value
 end
 
-function parsechoice(dict::Dict{String, Any}, key::String, choices::Dict, default; keypath::Vector{String} = String[])
+function parsechoice(dict::Dict{String, Any}, key::String, choices::Dict, default, keypath::Vector{String} = String[])
     haskey(dict, key) || return default
     value = dict[key]
     (value isa AbstractString && haskey(choices, value)) ||
@@ -131,5 +128,5 @@ function parsepackage(@nospecialize(settings), keypath::Vector{String})
     names(key) = Set{Symbol}(map(Symbol, parsenames(table[key], push!(copy(keypath), key))))
     skip = if haskey(table, "skip") names("skip") else Set{Symbol}() end
     only = if haskey(table, "only") names("only") else nothing end
-    PackageConfig(skip, only, parsechoice(table, "bindings", BINDINGS_NAMES, nothing; keypath))
+    PackageConfig(skip, only, parsechoice(table, "bindings", BINDINGS_NAMES, nothing, keypath))
 end

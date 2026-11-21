@@ -154,9 +154,14 @@ end
 # Lines are sorted so a rewrite is deterministic.
 function rewritecatalog(path::AbstractString, records)
     lines = sort!(String[catalogline(r) for r in records])
+    writeatomically(path, join(pushfirst!(lines, CATALOG_HEADER), '\n') * '\n')
+end
+
+# Copied in scripts/projectfiles.jl.
+function writeatomically(path::AbstractString, content)
     tmp = path * ".tmp-$(getpid())"
     try
-        write(tmp, join(pushfirst!(lines, CATALOG_HEADER), '\n') * '\n')
+        write(tmp, content)
         mv(tmp, path; force = true)
     catch
         rm(tmp; force = true)

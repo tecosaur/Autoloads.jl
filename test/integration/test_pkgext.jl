@@ -88,7 +88,7 @@ end
         withnotifications() do _
             workspace, spec, active = Ref(false), PACKAGE_SPECS["up"], Base.active_project()
             fake = (args...; kwargs...) -> workspace[] = kwargs[:workspace]
-            PACKAGE_SPECS["up"] = Pkg.REPLMode.CommandSpec((f === :api ? fake : getfield(spec, f)
+            PACKAGE_SPECS["up"] = Pkg.REPLMode.CommandSpec((if f === :api fake else getfield(spec, f) end
                                                            for f in fieldnames(Pkg.REPLMode.CommandSpec))...)
             Ext.wrappkgcommands!()
             try
@@ -134,13 +134,13 @@ end
                 thirdpartycalls = Ref(0)
                 thirdparty = (args...; kwargs...) -> (thirdpartycalls[] += 1; nothing)
                 spec = PACKAGE_SPECS[name]
-                PACKAGE_SPECS[name] = Pkg.REPLMode.CommandSpec((f === :api ? thirdparty : getfield(spec, f)
+                PACKAGE_SPECS[name] = Pkg.REPLMode.CommandSpec((if f === :api thirdparty else getfield(spec, f) end
                                                                for f in fieldnames(Pkg.REPLMode.CommandSpec))...)
                 Ext.wrappkgcommands!()
                 api = PACKAGE_SPECS[name].api
                 api()
                 @test thirdpartycalls[] == 1
-                @test name == "activate" ? api === thirdparty : (api isa Ext.RefreshingApi && notified[] == 1)
+                @test if name == "activate" api === thirdparty else api isa Ext.RefreshingApi && notified[] == 1 end
             end
         end
     end

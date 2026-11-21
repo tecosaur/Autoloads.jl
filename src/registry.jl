@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Pure lookups over the catalog, and the registry of names that may autoload.
+# Lookups over the catalog, the registry of names that may autoload, and the
+# session joining them with the environments.
 
 struct Catalog
     records::Dict{Base.PkgId, Vector{CatalogRecord}}
@@ -78,8 +79,9 @@ function autoloadset(memberdeps, membergraph::ManifestGraph, projectdeps, projec
             wanted[id] = nothing
         end
     end
+    (; project) = cfg
     for id in projectdeps
-        isselected(cfg, id.name) && (wanted[id] = versionin(projectgraph, id))
+        (project === nothing || id.name in project) && (wanted[id] = versionin(projectgraph, id))
     end
     wanted
 end
@@ -171,6 +173,34 @@ function unindexed(cat::Catalog, wanted::AbstractDict)
                    if !indexedhere(id, version) && failedat(cat, id, version) === nothing]
     sort!(missingids; by = pkgorder)
 end
+
+# The session
+
+struct Session
+    config::Config
+    member::String
+    memberenv::Environment
+    active::Union{String, Nothing}
+    projectenv::Environment
+    catalog::Catalog
+    autoload::Dict{Base.PkgId, Union{VersionNumber, Nothing}}
+    registry::Registry
+end
+
+function Session(config::Config, member::AbstractString, records::Vector{CatalogRecord}, builtins::Vector{PkgNames},
+                 stdlibs::Vector{Base.PkgId})
+    memberenv = environment(joinpath(member, "Project.toml"))
+    active = Base.active_project()
+    projectenv = environment(active)
+    catalog = buildcatalog(CatalogRecord[builtins; records])
+    autoload = autoloadset(memberenv.deps, memberenv.graph, projectenv.deps, projectenv.graph, stdlibs,
+                           [record.id for record in builtins], config)
+    Session(config, String(member), memberenv, active, projectenv, catalog, autoload,
+            buildregistry(catalog, autoload, config))
+end
+
+readsession(globaldir::AbstractString, catalog::AbstractString) =
+    Session(loadconfig(), memberdir(globaldir), readcatalog(catalog), builtinrecords(), stdlibids())
 
 # Utility functions
 

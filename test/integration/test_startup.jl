@@ -32,7 +32,9 @@ const SESSION_SETUP = """
                             names(Base.PkgId(nothing, "Base.Meta"), :Meta, :quot)]
     catalog, cfg = buildcatalog(records), parseconfig(Dict{String, Any}())
     autoload = Dict{Base.PkgId, Union{VersionNumber, Nothing}}(record.id => nothing for record in records)
-    const SESSION = Ext.Session(catalog, buildregistry(catalog, autoload, cfg), cfg, mktempdir(), Set{String}())
+    noenv = (; deps = Base.PkgId[], graph = Autoloads.ManifestGraph())
+    const SESSION = Autoloads.Session(cfg, mktempdir(), noenv, nothing, noenv, catalog, autoload,
+                                      buildregistry(catalog, autoload, cfg))
     @atomic Ext.SESSION.session = SESSION
     """
 

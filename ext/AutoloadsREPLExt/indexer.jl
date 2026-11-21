@@ -39,7 +39,7 @@ function startindexing!(ix::Indexer, policy::PrecompilePolicy, project::Abstract
     (; supervisor) = ix
     supervisor === nothing || istaskdone(supervisor) || return false
     isempty(wanted) && return false
-    stamp = catalogstamp(path)
+    stamp = filestamp(path)
     mkpath(dirname(path))
     script = joinpath(Autoloads.SCRIPTS_DIR, "index.jl")
     entries = ["$(id.uuid)=$(id.name)=$(something(version, "-"))" for (id, version) in wanted]
@@ -49,7 +49,7 @@ function startindexing!(ix::Indexer, policy::PrecompilePolicy, project::Abstract
     ix.supervisor = errormonitor(supervisor)
     errormonitor(Threads.@spawn begin
         wait(supervisor; throw = false)
-        onexit(catalogstamp(path) != stamp)
+        onexit(filestamp(path) != stamp)
     end)
     true
 end
@@ -67,11 +67,6 @@ function exitfailure(inprogress, exitcode::Integer, termsignal::Integer, timedou
     termsignal == 0 && exitcode == INTERRUPTED_EXIT_CODE && return nothing
     termsignal != 0 && return PkgFailure(id, at, "indexer killed by signal $termsignal while indexing")
     PkgFailure(id, at, "indexer exited with code $exitcode while indexing")
-end
-
-function catalogstamp(path)
-    st = stat(path)
-    if ispath(st); (st.mtime, st.size) end
 end
 
 function launchsupervised(cmd::Base.AbstractCmd, project::AbstractString, path::AbstractString, wanted, timeout_s::Integer,

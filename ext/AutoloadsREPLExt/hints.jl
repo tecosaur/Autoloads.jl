@@ -76,7 +76,7 @@ function undefvarhint(@nospecialize(io::IO), ex::UndefVarError)
         session = @atomic SESSION.session
         # Without a session the catalog is read on demand: a few ms, only when an error is shown.
         catalog, member = if session === nothing
-            buildcatalog(vcat(builtinrecords(), readcatalog(catalogpath()))), memberdir()
+            buildcatalog(CatalogRecord[builtinrecords(); readcatalog(catalogpath())]), memberdir()
         else
             session.catalog, session.member
         end

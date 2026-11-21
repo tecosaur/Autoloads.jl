@@ -1,11 +1,9 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Project, manifest and state-directory readers, and subprocess helpers.
+# Readers of projects, manifests, the state directory, and what Julia ships.
 
 const BUILTIN_MODULES = (Base.Threads,)
-
-const ENV_CHANGED = Ref{Any}(nothing)
 
 struct ManifestGraph
     versions::Dict{Base.UUID, Union{VersionNumber, Nothing}}  # `nothing` for a stdlib
@@ -13,6 +11,8 @@ struct ManifestGraph
 end
 
 ManifestGraph() = ManifestGraph(Dict{Base.UUID, Union{VersionNumber, Nothing}}(), Dict{Base.UUID, Vector{Base.UUID}}())
+
+const Environment = @NamedTuple{deps::Vector{Base.PkgId}, graph::ManifestGraph}
 
 globalenvdir() = dirname(Base.load_path_expand("@v#.#")::String)
 
@@ -83,7 +83,7 @@ function dependencyuuids(@nospecialize(deps), uuidof::Dict{String, Base.UUID})
 end
 
 """
-    environment(projectfile::Union{String, Nothing}) -> (; deps::Vector{Base.PkgId}, graph::ManifestGraph)
+    environment(projectfile::Union{String, Nothing}) -> Environment
 
 The direct deps and manifest graph of `projectfile`, empty without one. A
 package project counts among its own deps.
@@ -125,15 +125,3 @@ end
 
 builtinrecords() =
     [extractnames(m, Base.PkgId(nothing, "Base." * string(nameof(m)))) for m in BUILTIN_MODULES]
-
-runjulia(args::Cmd; output = stdout, options...) =
-    run(pipeline(juliacmd(args; options...); stdout = output, stderr = output); wait = false)
-
-function juliacmd(args::Cmd; project, env = (), nice::Bool = false, detach::Bool = false)
-    niceness = if nice && Sys.which("nice") !== nothing; `nice -n 10` else `` end
-    projectflag = if project === nothing; `` else `--project=$project` end
-    cmd = addenv(`$niceness $(Base.julia_cmd()) --startup-file=no --history-file=no $projectflag $args`, env...)
-    if detach Base.detach(cmd) else cmd end
-end
-
-notifyenvchange() = ENV_CHANGED[] === nothing || ENV_CHANGED[]()

@@ -120,11 +120,17 @@ function bindingform(rng, depth, pool = (:a, :b, :DataFrame))
     end
     var = rand(rng, pool)
     body, free, bound = bindingform(rng, depth - 1, pool)
-    ex = kind == 3 ? :(let $var = 1; $body end) :
-         kind == 4 ? :($var -> $body) :
-         kind == 5 ? :(for $var in 1:2; $body; end) :
-         kind == 6 ? :([$body for $var in 1:2]) :
-                     :(try error() catch $var; $body end)
+    ex = if kind == 3
+        :(let $var = 1; $body end)
+    elseif kind == 4
+        :($var -> $body)
+    elseif kind == 5
+        :(for $var in 1:2; $body; end)
+    elseif kind == 6
+        :([$body for $var in 1:2])
+    else
+        :(try error() catch $var; $body end)
+    end
     (ex, setdiff(free, [var]), bound ∪ [var])
 end
 

@@ -10,6 +10,7 @@ const KEY_ORDER = ["name", "uuid", "keywords", "license", "desc", "version", "re
 writetoml(path, dict) = writeatomically(path, sprint(io -> TOML.print(io, dict; sorted = true,
                                                                    by = key -> (something(findfirst(==(key), KEY_ORDER), length(KEY_ORDER) + 1), key))))
 
+# A copy of the one in catalogfile.jl.
 function writeatomically(path, content)
     tmp = path * ".tmp-$(getpid())"
     try
@@ -21,7 +22,11 @@ function writeatomically(path, content)
     end
 end
 
-"The `[sources]` entry for each developed or git-sourced package of `projectfile`'s manifest, by UUID."
+"""
+    manifestsources(projectfile) -> Dict{String, Dict{String, Any}}
+
+The `[sources]` entry for each developed or git-sourced package of `projectfile`'s manifest, by UUID.
+"""
 function manifestsources(projectfile)
     manifest = Base.project_file_manifest_path(projectfile)
     sources = Dict{String, Dict{String, Any}}()

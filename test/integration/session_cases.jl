@@ -5,19 +5,26 @@
 # worker and REPL transform against a prepared workspace, exiting non-zero if
 # any test fails. Inputs are shaped and evaluated as the REPL does.
 #
-#     julia [--project=<env>] session_cases.jl <group> <Autoloads test project> <member> <catalog> <extra>...
+#     julia [--project=<env>] session_cases.jl <group> <Autoloads test project> <extra>...
+#
+# The session's member and catalog are the defaults, under the depot path and
+# state directory the parent gives.
 
 using Test, Logging
 
-const GROUP, TEST_PROJECT, MEMBER, CATALOG = ARGS[1:4]
-const EXTRA = ARGS[5:end]
+const GROUP, TEST_PROJECT = ARGS[1:2]
+const EXTRA = ARGS[3:end]
 const DEFAULT_LOAD_PATH = copy(LOAD_PATH)
 const START_PROJECT = Base.active_project()
+# setup.jl sandboxes the state directory afresh, but this one is the parent's.
+const STATE_HOME = ENV["XDG_STATE_HOME"]
 # Autoloads comes from its test project, which must not stay on LOAD_PATH.
 push!(LOAD_PATH, TEST_PROJECT)
 using Autoloads, REPL, Future
 include("setup.jl")
 copy!(LOAD_PATH, DEFAULT_LOAD_PATH)
+ENV["XDG_STATE_HOME"] = STATE_HOME
+const MEMBER, CATALOG = Autoloads.memberdir(), Autoloads.catalogpath()
 
 const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
 const iscandidate = Autoloads.iscandidate
@@ -53,7 +60,7 @@ eventually(pred) = timedwait(() -> pred(currentsession()), WAIT_S; pollint = 0.0
 function awaitsession(pred = !isnothing)
     eventually(pred) ||
         error("Session never satisfied the condition within $WAIT_S s; indexer log:\n",
-              isfile(CATALOG * ".log") ? read(CATALOG * ".log", String) : "(none)")
+              if isfile(CATALOG * ".log") read(CATALOG * ".log", String) else "(none)" end)
     currentsession()
 end
 
@@ -69,7 +76,6 @@ autoloads(name) = s -> s !== nothing && iscandidate(s.registry, name)
 notautoloads(name) = s -> s === nothing || !iscandidate(s.registry, name)
 isloaded(id) = haskey(Base.loaded_modules, id)
 cataloglines() = readlines(CATALOG)
-startsession!() = Ext.startsession!(; member = MEMBER, catalog = CATALOG)
 
 if GROUP == "member"
     @testset "before the first session" begin
@@ -80,7 +86,7 @@ if GROUP == "member"
         @test take!(events) == Ext.Observed(FIXTURE_A) && !isready(events)
         @test currentsession() === nothing && !isfile(CATALOG * ".log")
     end
-    startsession!()
+    Ext.startsession!()
     @test any(cb -> cb isa Ext.ObserveLoad, Base.package_callbacks)
     @testset "indexes the member and autoloads from it" begin
         awaitsession(autoloads(:fa))
@@ -96,8 +102,8 @@ if GROUP == "member"
     @testset "changes" begin
         script = "using Pkg; Pkg.develop(path = ARGS[1])"
         output = IOBuffer()
-        develop = Autoloads.runjulia(`-e $script $(joinpath(FIXTURES_DIR, "FixtureB"))`; project = MEMBER, output,
-                                      env = ("JULIA_PKG_OFFLINE" => "true", "JULIA_PKG_PRECOMPILE_AUTO" => "0"))
+        develop = runjulia(`-e $script $(joinpath(FIXTURES_DIR, "FixtureB"))`; project = MEMBER, output,
+                            env = ("JULIA_PKG_OFFLINE" => "true", "JULIA_PKG_PRECOMPILE_AUTO" => "0"))
         wait(develop)
         success(develop) || error("Developing FixtureB failed:\n", String(take!(output)))
         runinput("1 + 1")
@@ -108,7 +114,7 @@ if GROUP == "member"
         @test awaitsession(s -> s !== before) isa Ext.Session
     end
 elseif GROUP == "sequencing"
-    startsession!()
+    Ext.startsession!()
     awaitsession(autoloads(:fa))
     @testset "statement sequencing" begin
         @test runinput("FA_CONST = 1; FA_CONST + 1") == 2
@@ -142,7 +148,7 @@ elseif GROUP == "sequencing"
         @test currentsession() === before
     end
 elseif GROUP == "macro"
-    startsession!()
+    Ext.startsession!()
     awaitsession(autoloads(Symbol("@fam")))
     @testset "a macro's owner loads in preparestatement" begin
         ex = Ext.repltransform(replinput("@fam 1"))
@@ -178,7 +184,7 @@ elseif GROUP == "stdlib"
     @testset "a ConfigError is logged once" begin
         Base.set_active_project(joinpath(brokenproject, "Project.toml"))
         logger = Test.TestLogger(min_level = Logging.Warn)
-        with_logger(startsession!, logger)
+        with_logger(Ext.startsession!, logger)
         flushworker()
         foreach(_ -> (Autoloads.notifyenvchange(); flushworker()), 1:3)
         @test length(logger.logs) == 1
@@ -221,7 +227,7 @@ elseif GROUP == "stdlib"
     end
 elseif GROUP == "project"
     unselected, without, selecting = (joinpath(dir, "Project.toml") for dir in EXTRA)
-    startsession!()
+    Ext.startsession!()
     @testset "project autoloads without a member" begin
         awaitsession(autoloads(:fa))
         @test runinput("fa()") === :fa
@@ -264,7 +270,7 @@ elseif GROUP == "project"
 elseif GROUP == "hints"
     bare = joinpath(only(EXTRA), "Project.toml")
     onlyb = Base.active_project()
-    startsession!()
+    Ext.startsession!()
     awaitsession()
     hintfor(name, scope = Main) = sprint(Ext.undefvarhint, UndefVarError(name, scope))
     activate!(project) = (Base.set_active_project(project); runinput("1"); flushworker())
@@ -311,21 +317,22 @@ elseif GROUP == "hints-bare"
     hintfor(name) = sprint(Ext.undefvarhint, UndefVarError(name, Main))
     initnote = "  • pkg> add Stranger  (run pkg> autoloads init to autoload packages)"
     @testset "without a session the catalog file is read on demand" begin
-        mkpath(dirname(Autoloads.catalogpath()))
-        cp(CATALOG, Autoloads.catalogpath())
         @test currentsession() === nothing
         @test occursin("using FixtureB  (a dependency of the active project)", hintfor(:fb))
-        # The depot's global environment has a member, which the hint finds on disk.
+        @test endswith(hintfor(:stranger_fn), initnote)
+        # A member is found on disk.
+        write(joinpath(mkpath(MEMBER), "Project.toml"), "")
         @test endswith(hintfor(:stranger_fn), "  • pkg> add Stranger  (or pkg> autoloads add Stranger)")
+        rm(MEMBER; recursive = true)
     end
     @testset "a session without a member gives the same note" begin
-        startsession!()
+        Ext.startsession!()
         awaitsession()
         @test currentsession() !== nothing
         @test endswith(hintfor(:stranger_fn), initnote)
     end
 elseif GROUP == "observe-again"
-    startsession!()
+    Ext.startsession!()
     awaitsession(autoloads(:fa))
     @testset "a known namespace is not rewritten" begin
         flushworker()
@@ -338,8 +345,8 @@ elseif GROUP == "observe-again"
 elseif GROUP == "unwritable"
     @testset "an unwritable catalog still gives a session" begin
         logger = Test.TestLogger(min_level = Logging.Warn)
-        with_logger(startsession!, logger)
-        @test startsession!() === Ext.RUNTIME[]
+        with_logger(Ext.startsession!, logger)
+        @test Ext.startsession!() === Ext.RUNTIME[]
         awaitsession(autoloads(:fa))
         events = Ext.RUNTIME[].events
         for _ in 1:3
