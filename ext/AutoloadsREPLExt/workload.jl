@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: © 2026 TEC <contact@tecosaur.net>
 # SPDX-License-Identifier: MPL-2.0
 
-# Precompile workload: what inputs and the worker's first refresh run. Tagged as
-# PrecompileTools does, to also cache what is dispatched to dynamically.
+# Precompile workload: what inputs and the worker's first refresh run.
 
-ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
+ccall(:jl_tag_newly_inferred_enable, Cvoid, ())  # as PrecompileTools does, to cache code dispatched to at run time
 try
     let id = Base.PkgId(Base.UUID("0b1b2b3b-4444-4555-8666-777788889999"), "Workload")
         at = Sighting[(; version = v"1.0.0", julia = JULIA_MINOR)]

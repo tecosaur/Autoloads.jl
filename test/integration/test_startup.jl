@@ -151,6 +151,16 @@ end
     @test isempty(traced)
 end
 
+@testset "loading Pkg, as entering `pkg>` does, compiles nothing" begin
+    traced, _ = tracedcompilation("""
+        using Autoloads
+        println(stderr, "START")
+        using Pkg
+        println(stderr, "END")
+        """)
+    @test isempty(traced)
+end
+
 @testset "inputs compile nothing of Autoloads'" begin
     @test !occursin("Autoloads", first(tracedcompilation(SCRIPT)))
 end

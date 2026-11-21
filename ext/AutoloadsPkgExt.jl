@@ -99,8 +99,9 @@ const REFRESHING_COMMANDS = ["add", "rm", "up", "develop", "free", "pin", "resol
 const COMMAND_SPEC_FIELDS = (:canonical_name, :short_name, :api, :should_splat, :argument_spec,
                              :option_specs, :completions, :description, :help)
 
-struct RefreshingApi{F <: Function} <: Function
-    api::F
+# Not parametric, so that wrapping every command compiles once.
+struct RefreshingApi <: Function
+    api::Function
 end
 
 function (refreshing::RefreshingApi)(args...; kwargs...)
@@ -134,7 +135,7 @@ function wrappkgcommands!()
             false
         end
     end
-    for original in unique(objectid, specs[name] for name in REFRESHING_COMMANDS)
+    for original in unique(objectid, REPLMode.CommandSpec[specs[name] for name in REFRESHING_COMMANDS])
         original.api isa RefreshingApi && continue
         api = RefreshingApi(if original === up
                                 (args...; kwargs...) -> original.api(args...; workspace = withautoloads(), kwargs...)
@@ -273,9 +274,10 @@ end
 
 function registercommands!()
     try
-        COMMANDS isa String && error(COMMANDS)
+        commands = COMMANDS
+        commands isa String && error(commands)
         specs = Dict{String, REPLMode.CommandSpec}()
-        for spec in COMMANDS
+        for spec in commands
             specs[spec.canonical_name] = spec
             spec.short_name === nothing || (specs[spec.short_name] = spec)
         end
@@ -290,6 +292,7 @@ end
 
 # Precompile workload: an empty global environment, but the user's settings and active project.
 if ccall(:jl_generating_output, Cint, ()) == 1
+    ccall(:jl_tag_newly_inferred_enable, Cvoid, ())  # as PrecompileTools does, to cache code dispatched to at run time
     try
         session = Autoloads.readsession(mktempdir(), joinpath(mktempdir(), "catalog"))
         Autoloads.printstatus(devnull, session)
@@ -298,6 +301,8 @@ if ccall(:jl_generating_output, Cint, ()) == 1
     catch err
         err isa ConfigError || rethrow()
     end
+    __init__()
+    ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
 end
 
 end
