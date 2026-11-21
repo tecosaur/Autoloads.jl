@@ -179,7 +179,7 @@ function observe!(worker::Worker, ids)
     records = CatalogRecord[]
     for id in ids
         id.uuid === nothing && continue
-        record = Base.invokelatest(extractnames, Base.root_module(id), id)
+        record = Base.invokelatest(extractnames, Base.root_module(id), id)::PkgNames
         # Extensions offer no names beyond their own.
         ownnameonly = isempty(record.public) && isempty(record.reexported) && length(record.exported) == 1
         ownnameonly || push!(records, record)

@@ -39,7 +39,8 @@ function installtransform()
     end
     push!(REPL.repl_ast_transforms, repltransform)
     backend = if isdefined(Base, :active_repl_backend) Base.active_repl_backend end
-    backend !== nothing && hasproperty(backend, :ast_transforms) && push!(backend.ast_transforms, repltransform)
+    # Builtins, as `hasproperty` would compile for the backend's type.
+    backend !== nothing && isdefined(backend, :ast_transforms) && push!(getfield(backend, :ast_transforms), repltransform)
     nothing
 end
 

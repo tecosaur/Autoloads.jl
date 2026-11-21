@@ -22,7 +22,8 @@ end
 
 function (lazy::LazyIntegration)(timer::Timer)
     (; repl) = lazy
-    hasproperty(repl, :mistate) && repl.mistate === nothing && return
+    # Builtins, as `hasproperty` would compile for the REPL's type.
+    isdefined(repl, :mistate) && getfield(repl, :mistate) === nothing && return
     close(timer)
     finish(lazy.loading)
 end
