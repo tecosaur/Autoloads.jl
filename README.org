@@ -50,7 +50,8 @@ all re-export it from one package (as ~fit~ from StatsAPI, by both StatsBase
 and Distributions): it then comes from whichever of them is loaded first.
 
 Autoloadable names also tab-complete, and an ~UndefVarError~ lists the
-packages that provide the name.
+packages that provide the name, including those whose installed version lacks
+it but a newer one is known to have it.
 
 The full set of commands is:
 

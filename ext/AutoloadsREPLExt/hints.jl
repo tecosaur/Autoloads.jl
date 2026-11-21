@@ -6,24 +6,37 @@
 
 const MAX_HINT_PROVIDERS = 3
 
-# Most readily usable first: hints are ranked in this order.
-@enum Availability Builtin DirectDep InProjectManifest OnLoadPath AutoloadPackage Elsewhere
+# Most readily usable first: hints are ranked in this order. An outdated
+# package's installed version lacks the name, which a newer one offers.
+@enum Availability Builtin DirectDep InProjectManifest Outdated OnLoadPath AutoloadPackage OutdatedAutoload Elsewhere
 
 struct RankedProvider
     id::Base.PkgId
     owns::Bool
     availability::Availability
     env::Union{String, Nothing}
+    versions::Union{Pair{VersionNumber, VersionNumber}, Nothing}  # installed => newer, when outdated
 end
 
-function availability(id::Base.PkgId, deps::Set{Base.UUID}, manifest::Set{Base.UUID}, memberdeps::Set{Base.UUID},
-                      loadpathenv::Function)
-    id.uuid === nothing && return Builtin, nothing
-    id.uuid in deps && return DirectDep, nothing
-    id.uuid in manifest && return InProjectManifest, nothing
+function availability(id::Base.PkgId, project::Environment, member::Environment, loadpathenv::Function,
+                      newerwith::Function)
+    id.uuid === nothing && return Builtin, nothing, nothing
+    function outdated(graph::ManifestGraph)
+        installed = @something(get(graph.versions, id.uuid, nothing), return nothing)
+        newer = @something(newerwith(id, installed), return nothing)
+        installed => newer
+    end
+    isdep = any(dep -> dep.uuid == id.uuid, project.deps)
+    if isdep || haskey(project.graph.versions, id.uuid)
+        versions = outdated(project.graph)
+        versions === nothing || return Outdated, nothing, versions
+        return if isdep DirectDep else InProjectManifest end, nothing, nothing
+    end
     env = loadpathenv(id)
-    env === nothing || return OnLoadPath, env
-    if id.uuid in memberdeps AutoloadPackage else Elsewhere end, nothing
+    env === nothing || return OnLoadPath, env, nothing
+    any(dep -> dep.uuid == id.uuid, member.deps) || return Elsewhere, nothing, nothing
+    versions = outdated(member.graph)
+    if versions === nothing AutoloadPackage else OutdatedAutoload end, nothing, versions
 end
 
 function rankproviders(providers, avail::Function)
@@ -42,6 +55,10 @@ function formathint(var::Symbol, ranked::Vector{RankedProvider}, sources::Dict{B
             "using $name", "a dependency of the active project"
         elseif p.availability == InProjectManifest
             "pkg> add $name", "already resolved in the active project's manifest"
+        elseif p.availability in (Outdated, OutdatedAutoload)
+            installed, newer = something(p.versions)
+            if p.availability == Outdated "pkg> up $name" else "pkg> autoloads up $name" end,
+                "$var is in $name v$newer; v$installed is installed"
         elseif p.availability == OnLoadPath
             "using $name", "from $(p.env)"
         elseif p.availability == AutoloadPackage
@@ -97,13 +114,19 @@ end
 function providerhint(var::Symbol, catalog::Catalog, member::String)
     providers = Autoloads.providers(catalog, var)
     isempty(providers) && return styled""
-    (; deps, graph) = environment(Base.active_project())
-    depuuids = Set{Base.UUID}(id.uuid for id in deps)
-    manifest = Set{Base.UUID}(keys(graph.versions))
+    project = environment(Base.active_project())
     memberproject = joinpath(member, "Project.toml")
-    memberdeps = Set{Base.UUID}(id.uuid for id in projectdeps(memberproject))
-    avail(id) = availability(id, depuuids, manifest, memberdeps, loadpathenv)
-    formathint(var, rankproviders(providers, avail), reexportsources(providers, graph), isfile(memberproject))
+    memberenv = environment(memberproject)
+    # The newest version known to offer `var`, when the installed one is known not to.
+    function newerwith(id, installed)
+        record = @something(namesat(catalog, id, installed), return nothing)
+        (var in record.exported || var in record.reexported) && return nothing
+        newest = maximum(s.version for s in something(namesat(catalog, id, nothing)).at if s.version !== nothing;
+                         init = installed)
+        if newest > installed newest end
+    end
+    avail(id) = availability(id, project, memberenv, loadpathenv, newerwith)
+    formathint(var, rankproviders(providers, avail), reexportsources(providers, project.graph), isfile(memberproject))
 end
 
 function loadpathenv(id::Base.PkgId)

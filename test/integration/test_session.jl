@@ -149,7 +149,10 @@ end
         packages.Distributed.skip = ["@spawn"]
         """)
     brokenproject = fixtureproject(String[]; prefs = "stdlib = \"yes\"")
-    hintstate = seededstate(FIXTURE_A_NAMES, FIXTURE_B_NAMES, FIXTURE_C_NAMES)
+    # FixtureA v0.1.0 is installed, but a newer version is known to offer `fa_new`.
+    newerfixturea = PkgNames(FIXTURE_A, here(v"0.2.0"), FIXTURE_A_NAMES.exported ∪ [:fa_new], FIXTURE_A_NAMES.public,
+                             Set{Symbol}())
+    hintstate = seededstate(FIXTURE_A_NAMES, newerfixturea, FIXTURE_B_NAMES, FIXTURE_C_NAMES)
     bareproject = fixtureproject(String[])
     rm(joinpath(bareproject, "Manifest.toml"))
     onlyb = fixtureproject(["FixtureB"]; prefs = "project = [\"FixtureB\"]")

@@ -285,6 +285,9 @@ elseif GROUP == "hints"
             "  • pkg> add FixtureA  (already resolved in the active project's manifest)\n" *
             "  • pkg> add FixtureC  (already resolved in the active project's manifest)"
     end
+    @testset "a name only a newer version offers" begin
+        @test hintfor(:fa_new) == header(:fa_new) * "  • pkg> up FixtureA  (fa_new is in FixtureA v0.2.0; v0.1.0 is installed)"
+    end
     @testset "names not provided by the catalog, or outside Main" begin
         @test hintfor(:no_such_name) == ""
         @test hintfor(:fa, Base) == ""
@@ -298,6 +301,10 @@ elseif GROUP == "hints"
             "  • using FixtureA  (an autoload package)\n" *
             "  • pkg> add FixtureC  (or pkg> autoloads add FixtureC)\n" *
             "  • pkg> add FixtureB  (or pkg> autoloads add FixtureB, re-exports it from FixtureA and FixtureC)"
+    end
+    @testset "a name only a newer autoload package offers" begin
+        @test hintfor(:fa_new) ==
+            header(:fa_new) * "  • pkg> autoloads up FixtureA  (fa_new is in FixtureA v0.2.0; v0.1.0 is installed)"
     end
     @testset "load path environments" begin
         envdir = joinpath(DEPOT_PATH[1], "environments", "extras")
