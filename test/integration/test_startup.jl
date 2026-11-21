@@ -64,6 +64,21 @@ const HINT_SCRIPT = SESSION_SETUP * """
     print(stderr, "HINTED: ", occursin("pkg> add Stranger", hint))
     """
 
+# The interactive start, given the REPL's own types.
+const INIT_SCRIPT = """
+    using Autoloads, REPL, Future
+    const Ext = Base.get_extension(Autoloads, :AutoloadsREPLExt)
+    lazy = Autoloads.LazyIntegration(Task(() -> nothing),
+                                     REPL.LineEditREPL(REPL.Terminals.TTYTerminal("dumb", stdin, stdout, stderr), false))
+    timer = Timer(0)
+    @eval Base active_repl_backend = \$(REPL.REPLBackend())
+    Base.is_interactive = true
+    println(stderr, "START")
+    lazy(timer)
+    Ext.__init__()
+    println(stderr, "END")
+    """
+
 "The `--trace-compile` output of `script` between its `START` and `END` lines, and what follows them."
 function tracedcompilation(script)
     julia = joinpath(Sys.BINDIR, Base.julia_exename())
@@ -125,6 +140,15 @@ Sys.iswindows() || @testset "a REPL started with only Autoloads loaded integrate
     # Split, so the echoed input cannot match.
     input = "timedwait(() -> $isintegrated, 60); print(\"INTEG\", \"RATED=\", $isintegrated)"
     @test replcapture(cmd, input, r"INTEGRATED=(true|false)") == "true"
+end
+
+@testset "the interactive start compiles nothing" begin
+    # Away from the user's environments, which the session worker maintains.
+    depot = mktempdir()
+    write(joinpath(mkpath(joinpath(depot, "environments", "v$(VERSION.major).$(VERSION.minor)")), "Project.toml"), "")
+    depotpath = join([depot; DEPOT_PATH], if Sys.iswindows() ';' else ':' end)
+    traced, _ = withenv(() -> tracedcompilation(INIT_SCRIPT), "JULIA_DEPOT_PATH" => depotpath, "XDG_STATE_HOME" => mktempdir())
+    @test isempty(traced)
 end
 
 @testset "inputs compile nothing of Autoloads'" begin

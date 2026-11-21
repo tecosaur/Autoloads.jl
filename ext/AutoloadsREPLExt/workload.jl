@@ -41,6 +41,8 @@ try
         precompile(Worker, (Runtime, Indexer))
         precompile(runworker, (Worker,))
         precompile(launchsupervised, (Cmd, String, String, Vector{Pair{Base.PkgId, Union{VersionNumber, Nothing}}}, Int, Set{String}))
+        precompile(setproperty!, (Base.Process, Symbol, Base.DevNull))
+        precompile(Core.kwcall, (@NamedTuple{throw::Bool}, typeof(wait), Task))
         mktempdir() do dir
             member = joinpath(dir, "autoloads")
             mkpath(member)
