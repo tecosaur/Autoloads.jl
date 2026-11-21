@@ -152,13 +152,15 @@ end
 end
 
 @testset "loading Pkg, as entering `pkg>` does, compiles nothing" begin
-    traced, _ = tracedcompilation("""
+    script = """
         using Autoloads
         println(stderr, "START")
         using Pkg
         println(stderr, "END")
-        """)
-    @test isempty(traced)
+        """
+    tracedcompilation(script)  # precompiles the extension, if need be
+    # Loading an extension compiles some of Base on 1.12.
+    @test isempty(first(tracedcompilation(script))) skip = VERSION < v"1.13"
 end
 
 @testset "inputs compile nothing of Autoloads'" begin

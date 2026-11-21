@@ -5,7 +5,8 @@
 # evaluation thread: loading packages from two threads at once crashes Julia 1.13.
 
 const REPL_ID = Base.PkgId(Base.UUID("3fa0cd96-eef1-5676-8a61-b3b8758bbffb"), "REPL")
-# The extension's other trigger: a stdlib nothing else loads, used as a latch.
+const STYLEDSTRINGS_ID = Base.PkgId(Base.UUID("f489334b-da3d-4c2e-b8f0-e476e12c162b"), "StyledStrings")
+# The extension's last trigger: a stdlib nothing else loads, used as a latch.
 const LATCH_ID = Base.PkgId(Base.UUID("9fa8497b-333b-5362-9e8d-4d0656e87820"), "Future")
 const PROMPT_POLL_S = 0.02
 
@@ -40,8 +41,9 @@ function __init__()
     nothing
 end
 
-# The running REPL only counts as loaded, and so triggers the extension, once required.
-loadintegration() = (Base.require(REPL_ID); Base.require(LATCH_ID))
+# The running REPL, and on 1.12 the StyledStrings it uses, only count as loaded, and so trigger the extension,
+# once required.
+loadintegration() = (Base.require(REPL_ID); Base.require(STYLEDSTRINGS_ID); Base.require(LATCH_ID))
 
 # An `atreplinit` hook: the REPL's backend copies `repl_ast_transforms` afterwards.
 function deferintegration(@nospecialize(repl))
