@@ -356,7 +356,8 @@ function runpkgscript(op::Symbol, pkgs::Vector{String}, args::Cmd; project::Abst
 end
 
 function juliacmd(args::Cmd; project::AbstractString, env = (), nice::Bool = false, detach::Bool = false)
-    niceness = if nice && Sys.which("nice") !== nothing; `nice -n 10` else `` end
+    # Windows' `nice` (from Git or MSYS2) runs Julia as a child, which killing it would orphan.
+    niceness = if nice && !Sys.iswindows() && Sys.which("nice") !== nothing; `nice -n 10` else `` end
     cmd = addenv(`$niceness $(Base.julia_cmd()) --startup-file=no --history-file=no --project=$project $args`, env...)
     if detach Base.detach(cmd) else cmd end
 end
