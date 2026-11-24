@@ -10,7 +10,7 @@ using REPL: LineEdit
 using Autoloads: Registry, LoadRequest, iscandidate, manifestgraph, dependencyclosure,
     projectdeps, environment
 using Autoloads: PkgNames, PkgFailure, CatalogRecord, Sighting, PrecompilePolicy, Lazy, Background,
-    juliacmd, writecatalog!, CatalogTooNew, INTERRUPTED_EXIT_CODE, INDEXING_LOCK_SUFFIX, JULIA_MINOR
+    juliacmd, writecatalog!, CatalogTooNew, INTERRUPTED_EXIT_CODE, isinterrupt, INDEXING_LOCK_SUFFIX, JULIA_MINOR
 using Autoloads: Catalog, Config, ConfigError, ManifestGraph, Environment, Session, buildcatalog, buildregistry,
     pendingloads, unindexed, owner, namesat, readcatalog, readhealedcatalog,
     extractnames, stdlibids, builtinrecords, memberdir, catalogpath, statedir, loadconfig, parseconfig

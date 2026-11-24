@@ -77,10 +77,6 @@ end
 
 # Utility functions
 
-# A Ctrl-C during a package's `__init__` or top level arrives wrapped.
-isinterrupt(err) = err isa InterruptException ||
-    (err isa Union{Base.InitError, LoadError} && isinterrupt(err.error))
-
 function checkversions(id::Base.PkgId, member::AbstractString)
     graph = manifestgraph(joinpath(member, "Project.toml"))
     closure = dependencyclosure(graph, id.uuid)

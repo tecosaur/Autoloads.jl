@@ -56,7 +56,7 @@ function undefinedglobals(stmt, mod::Module)
     lowered = try
         Meta.lower(mod, stmt)
     catch err
-        err isa InterruptException && rethrow()
+        isinterrupt(err) && rethrow()
         return Symbol[]
     end
     referenced, bound = Symbol[], Set{Symbol}()

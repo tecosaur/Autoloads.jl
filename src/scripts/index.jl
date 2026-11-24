@@ -81,10 +81,6 @@ function indexpackage(path, id::Base.PkgId, version::Union{VersionNumber, Nothin
     report("indexed $(id.uuid)")
 end
 
-# Loading wraps an interrupt in `LoadError`/`InitError`.
-isinterrupt(err) =
-    err isa InterruptException || ((err isa LoadError || err isa InitError) && isinterrupt(err.error))
-
 # ---------
 
 # Julia 1.12.7 segfaults on SIGINT with this set (exit 0, signal 11), so an

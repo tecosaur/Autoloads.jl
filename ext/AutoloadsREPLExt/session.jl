@@ -104,7 +104,7 @@ function repltransform(ex)
     try
         transforminput(runtime, ex)
     catch err
-        err isa InterruptException && rethrow()
+        isinterrupt(err) && rethrow()
         @error "Autoloads transform failed" exception = (err, catch_backtrace()) maxlog = 1
         ex
     end
@@ -234,7 +234,7 @@ function maintainenvironment!(worker::Worker)
         try
             f(output)
         catch err
-            err isa InterruptException && rethrow()
+            isinterrupt(err) && rethrow()
             @error "Autoloads could not $purpose" output = String(take!(output)) exception = (err, catch_backtrace())
             nothing
         end

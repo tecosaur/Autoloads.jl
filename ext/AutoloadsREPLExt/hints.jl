@@ -105,7 +105,7 @@ function undefvarhint(@nospecialize(io::IO), ex::UndefVarError)
         print(IOContext(buffer, :color => get(io, :color, false)::Bool), providerhint(ex.var, catalog, member))
         print(io, String(take!(buffer)))
     catch err
-        err isa InterruptException && rethrow()
+        isinterrupt(err) && rethrow()
         @debug "Autoloads could not build the UndefVarError hint" exception = (err, catch_backtrace())
     end
     nothing

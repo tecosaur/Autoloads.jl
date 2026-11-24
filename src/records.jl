@@ -42,6 +42,10 @@ const CatalogRecord = Union{PkgNames, PkgFailure}
 
 const INTERRUPTED_EXIT_CODE = 130  # 128 + SIGINT, as shells report an interrupted process
 
+isinterrupt(err) = err isa InterruptException ||
+    (isdefined(Base, :CancellationRequest) && err isa Base.CancellationRequest) ||
+    (err isa Union{Base.InitError, LoadError} && isinterrupt(err.error))
+
 Base.:(==)(a::R, b::R) where {R <: CatalogRecord} = a.id == b.id && a.at == b.at && sameclaim(a, b)
 Base.hash(r::CatalogRecord, h::UInt) = hash(r.at, hash(r.id, h))
 

@@ -77,7 +77,7 @@ function LineEdit.complete_line(c::CompletionWrapper, s, mod::Module; hint::Bool
     try
         withautoloadable(result, session, LineEdit.input_string(s))
     catch err
-        err isa InterruptException && rethrow()
+        isinterrupt(err) && rethrow()
         @debug "Autoloads could not add completions" exception = (err, catch_backtrace())
         result
     end
