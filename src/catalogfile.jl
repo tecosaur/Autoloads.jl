@@ -118,18 +118,20 @@ function parsecatalogfile(path::AbstractString)
     malformed = 0
     isfile(path) || return records, malformed
     hasheader = false
-    for (i, line) in enumerate(eachline(path))
-        if i == 1
-            format = something(if startswith(line, CATALOG_HEADER_PREFIX) tryparse(Int, chopprefix(line, CATALOG_HEADER_PREFIX)) end, 0)
-            format > CATALOG_FORMAT && throw(CatalogTooNew(path, format))
-            (hasheader = format == CATALOG_FORMAT) && continue
-        end
-        isempty(line) && continue
-        record = if hasheader parsecatalogline(line) end
-        if record === nothing
-            malformed += 1
-        else
-            push!(records, record)
+    open(path) do io
+        for (i, line) in enumerate(eachline(io))
+            if i == 1
+                format = something(if startswith(line, CATALOG_HEADER_PREFIX) tryparse(Int, chopprefix(line, CATALOG_HEADER_PREFIX)) end, 0)
+                format > CATALOG_FORMAT && throw(CatalogTooNew(path, format))
+                (hasheader = format == CATALOG_FORMAT) && continue
+            end
+            isempty(line) && continue
+            record = if hasheader parsecatalogline(line) end
+            if record === nothing
+                malformed += 1
+            else
+                push!(records, record)
+            end
         end
     end
     records, malformed
