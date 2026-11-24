@@ -117,7 +117,8 @@ end
         @test occursin("exited with code 3", logof(path))
         @test only(recordsof(path, FIXTURE_C)) isa PkgNames
     end
-    @testset "one run at a time; an interrupted run records nothing" begin
+    # Windows has no interrupt signal to send.
+    Sys.iswindows() || @testset "one run at a time; an interrupted run records nothing" begin
         pending = startrun(ix, Lazy, [FIXTURE_C]; env = ("FIXTUREC_HANG" => "1",))
         timedwait(() -> occursin("indexing $(FIXTURE_C.uuid)", logof(pending.path)), INDEXER_WAIT_S) === :ok ||
             error("indexer never announced FixtureC within $INDEXER_WAIT_S s; log:\n", logof(pending.path))
@@ -154,7 +155,8 @@ end
         @test !IndexerExt.startindexing!(ix, Lazy, WS.member, joinpath(mktempdir(), "catalog"),
                                           wanted(Base.PkgId[]), _ -> error("onexit must not run"))
     end
-    @testset "a recurring supervisor failure is logged once" begin
+    # Windows cannot make a directory unwritable to its owner.
+    Sys.iswindows() || @testset "a recurring supervisor failure is logged once" begin
         dir = mktempdir()
         chmod(dir, 0o555)  # the indexer log cannot be opened
         logger = Test.TestLogger(min_level = Base.CoreLogging.Error)

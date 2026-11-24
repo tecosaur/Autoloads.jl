@@ -123,8 +123,8 @@ membernames(member) = sort!([id.name for id in projectdeps(joinpath(member, "Pro
         @test occursin("Created", output)
         @test membernames(joinpath(env.globaldir, "autoloads")) == ["FixtureA"]
         @testset "and adds from a git URL" begin
-            url = "file://" * gitfixture("FixtureC")
-            captured(() -> Autoloads.add("$url#main"), env.depotpath)
+            url = "file:///" * lstrip(replace(gitfixture("FixtureC"), '\\' => '/'), '/')
+            indepot(() -> Autoloads.add("$url#main"), env.depotpath)
             member = Base.parsed_toml(joinpath(env.globaldir, "autoloads", "Project.toml"))
             @test haskey(member["deps"], "FixtureC")
             @test VERSION < v"1.13-" || member["sources"]["FixtureC"] == Dict("url" => url, "rev" => "main")
