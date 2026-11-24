@@ -1,6 +1,12 @@
 #+title: Autoloads
 #+author: tecosaur
 
+#+html: <a href="https://tecosaur.net"><img src="https://img.shields.io/badge/%F0%9F%A6%95-tec-27a560.svg"></a>
+#+html: <a href="https://github.com/tecosaur/Autoloads.jl/actions?query=workflow%3ACI"><img src="https://github.com/tecosaur/Autoloads.jl/workflows/CI/badge.svg"></a>
+#+html: <a href="https://coveralls.io/github/tecosaur/Autoloads.jl"><img src="https://coveralls.io/repos/github/tecosaur/Autoloads.jl/badge.svg"></a>
+#+html: <a href="https://www.tldrlegal.com/license/mozilla-public-license-2-0-mpl-2"><img src="https://img.shields.io/badge/license-MPL%202.0-teal.svg"></a>
+#+html: <a href="https://liberapay.com/tec"><img src="https://shields.io/badge/support%20my%20efforts-f6c915?logo=Liberapay&logoColor=black"></a>
+
 Autoloads lets you *use packages at the REPL without loading them first*.
 
 When you run code that uses a name such as ~@b~, ~DataFrame~, or an
