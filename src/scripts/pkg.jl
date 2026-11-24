@@ -10,16 +10,18 @@
 const Pkg = Base.require(Base.PkgId(Base.UUID("44cfe95a-1eb2-52ea-b672-e2afdf69b78f"), "Pkg"))
 
 function main(op, pkgs)
+    isurl(pkg) = occursin("://", pkg) || startswith(pkg, "git@")
     # A git URL (`url#rev` picks a revision), or else a registered name.
     function packagespec(pkg)
-        occursin("://", pkg) || startswith(pkg, "git@") || return Pkg.PackageSpec(name = pkg)
+        isurl(pkg) || return Pkg.PackageSpec(name = pkg)
         url, rev = if occursin('#', pkg) String.(split(pkg, '#'; limit = 2)) else (pkg, nothing) end
         Pkg.PackageSpec(; url, rev)
     end
     if op == "add"
-        paths = filter(isabspath, pkgs)
+        # On Windows, `isabspath` takes a URL's scheme for a drive.
+        paths = filter(pkg -> !isurl(pkg) && isabspath(pkg), pkgs)
         isempty(paths) || Pkg.develop([Pkg.PackageSpec(path = path) for path in paths])
-        specs = [packagespec(pkg) for pkg in pkgs if !isabspath(pkg)]
+        specs = [packagespec(pkg) for pkg in pkgs if pkg ∉ paths]
         isempty(specs) || Pkg.add(specs)
     elseif op == "remove"
         Pkg.rm(pkgs)
